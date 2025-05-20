@@ -69,6 +69,9 @@ class DrivingApp(ShowBase):
     def update(self, task):
         """Main update loop"""
         dt = ClockObject.getGlobalClock().getDt()
+        # Print which side of the road the vehicle is on
+        side = self.road_system.get_road_side(self.vehicle.get_position())
+
         
         # Update vehicle and check road state
         vehicle_pos = self.vehicle.update(dt, self.road_system.is_on_road(self.vehicle.get_position()))
