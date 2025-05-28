@@ -5,6 +5,7 @@ import math
 import time
 import random
 import requests
+import pygame
 from panda3d.core import (Point3, Vec3, GeomVertexFormat, 
                           GeomVertexData, GeomVertexWriter, Geom, 
                           GeomTriangles, GeomNode, GeomTristrips, 
@@ -24,6 +25,19 @@ class RoadSystem:
         # Container for road elements
         self.roads_node = None
         self.last_road_side = None
+
+        # Pygame setup for road generation
+        pygame.init()
+        self.width = 800
+        self.height = 600
+        self.screen = pygame.display.set_mode((self.width, self.height))
+        pygame.display.set_caption("Road Generation Simulation")
+        self.clock = pygame.time.Clock()
+
+    @property
+    def lane_width(self):
+        """Calculate and return the lane width based on road width."""
+        return self.road_width / 2.0  # Assuming two lanes
 
     def is_on_road(self, pos):
         """Check if a position is on a road"""
@@ -255,15 +269,6 @@ class RoadSystem:
                 geom.addPrimitive(prim)
                 geom_node = GeomNode("road_geom")
                 geom_node.addGeom(geom)
-                road_np = self.roads_node.attachNewNode(geom_node)
-                road_np.setColor(0.2, 0.2, 0.2, 1)
-                road_np.setTexture(self.noise_texture, 1)
-
-                # --- Begin improved dashed center line code (flat on road) ---
-                if len(center_line) >= 2:
-                    vertex_format_lines = GeomVertexFormat.getV3()
-                    vdata_lines = GeomVertexData("dashes", vertex_format_lines, Geom.UHStatic)
-                    vwriter_lines = GeomVertexWriter(vdata_lines, 'vertex')
                     dash_prim = GeomLines(Geom.UHStatic)
                     dash_length = self.road_width * 0.3   # Length of each dash
                     gap_length = dash_length              # Gap between dashes
@@ -403,3 +408,17 @@ class RoadSystem:
         np = NodePath(node)
         np.setColor(1, 0, 0, 1)
         return np
+
+    def lane_offset(self, pos):
+        """Returns the signed distance from the given position to the centerline of the closest road segment."""
+        segment, center, _ = self.get_closest_road_segment(pos)
+        if center is None:
+            return 0.0
+        # Signed offset: left is negative, right is positive
+        to_vehicle = pos - center
+        road_dir = (segment[1] - segment[0]).normalized() if segment else None
+        if road_dir is not None:
+            perp = road_dir.cross(Vec3(0, 0, 1))
+            offset = to_vehicle.dot(perp)
+            return offset
+        return 0.0

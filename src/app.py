@@ -10,6 +10,7 @@ from .vehicle import Vehicle
 from .terrain import create_grid, generate_noise_texture
 from .road import RoadSystem
 from .constants import DEFAULT_LAT, DEFAULT_LON, DEFAULT_RADIUS
+from src.nn_evolution import EvolutionManager
 
 class DrivingApp(ShowBase):
     def __init__(self):
@@ -34,7 +35,13 @@ class DrivingApp(ShowBase):
         
         # Position car at spawn point if available
         if self.road_system.spawn_point:
-            self.vehicle.model.setPos(self.road_system.spawn_point)
+            spawn_point = self.road_system.spawn_point
+            if self.road_system.is_on_road(spawn_point):
+                self.vehicle.model.setPos(spawn_point)
+            else:
+                # Adjust to nearest valid road point
+                nearest_road_point = self.road_system.get_nearest_road_point(spawn_point)
+                self.vehicle.model.setPos(nearest_road_point)
         
         # Set up the camera
         self.setup_camera()
@@ -44,6 +51,16 @@ class DrivingApp(ShowBase):
         
         # Add update task
         self.taskMgr.add(self.update, "update")
+        
+        # Evolution mode variables
+        self.evolution_mode = False
+        self.evolution_manager = EvolutionManager(self.loader, self.render, self.road_system)
+        
+        # Timer to track resets
+        self.evolution_timer = 0  
+
+        # Accept key for toggling evolution mode
+        self.accept("e", self.toggle_evolution_mode)
         
     def setup_camera(self):
         """Set up the main camera"""
@@ -65,10 +82,32 @@ class DrivingApp(ShowBase):
         """Set key state for vehicle controls"""
         self.vehicle.set_control(key, value)
         
-    
+    def toggle_evolution_mode(self):
+        """Toggle evolution mode on and off"""
+        self.evolution_mode = not self.evolution_mode
+        print(f"Evolution mode: {'ON' if self.evolution_mode else 'OFF'}")
+
     def update(self, task):
         """Main update loop"""
         dt = ClockObject.getGlobalClock().getDt()
+        self.evolution_timer += dt
+
+        if self.evolution_mode:
+            # Run one step of the evolutionary batch
+            self.evolution_manager.step()
+
+            # Reset every 10 seconds
+            if self.evolution_timer >= 10:
+                self.evolution_manager.evolve()
+                self.evolution_timer = 0
+
+            # Optionally, visualize the best vehicle
+            best_vehicle, _ = self.evolution_manager.best_vehicle()
+            vehicle_pos = best_vehicle.get_position()
+            self.camera.setPos(vehicle_pos + Vec3(0, -5, 5))
+            self.camera.lookAt(best_vehicle.get_model())
+            return task.cont
+        
         # Print which side of the road the vehicle is on
         side = self.road_system.get_road_side(self.vehicle.get_position())
 

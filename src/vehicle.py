@@ -22,6 +22,7 @@ class Vehicle:
         self.acceleration_rate = 5.0
         self.deceleration_rate = 20.0
         self.friction = 5.0
+        self.crashed = False
         
         # Controls
         self.controls = {"forward": False, "backward": False, "left": False, "right": False}
@@ -55,7 +56,9 @@ class Vehicle:
         
         # Move vehicle
         self.model.setPos(self.model, 0, self.velocity * dt, 0)
-        
+        # Crash detection
+        if not is_on_road:
+            self.crashed = True
         # Return current position for camera updates
         return self.model.getPos()
         
@@ -66,3 +69,7 @@ class Vehicle:
     def get_model(self):
         """Get the vehicle model for camera lookAt"""
         return self.model
+    
+    @property
+    def speed(self):
+        return abs(self.velocity)
