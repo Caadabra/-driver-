@@ -44,9 +44,6 @@ class Car:
         self.color = color
         self.width = 12/1.4
         self.height = 20/1.4
-        self.checkpoints_passed = []
-        self.current_checkpoint = 0
-        self.laps_completed = 0
         self.raycast_length = 150
         self.raycast_angles = [-60, -30, 0, 30, 60]
         self.raycast_distances = []
@@ -86,8 +83,7 @@ class Car:
             if keys[pygame.K_LEFT]:
                 self.angle -= 5
             if keys[pygame.K_RIGHT]:
-                self.angle += 5
-
+                self.angle += 5        
         prev_x, prev_y = self.x, self.y
         self.x += math.sin(math.radians(self.angle)) * self.speed
         self.y -= math.cos(math.radians(self.angle)) * self.speed
@@ -98,21 +94,6 @@ class Car:
             self.time_alive += 1
 
         self.speed *= 0.95
-
-    def check_collision(self, checkpoints):
-        if self.current_checkpoint < len(checkpoints):
-            checkpoint = checkpoints[self.current_checkpoint]
-            car_rect = pygame.Rect(self.x - self.width//2, self.y - self.height//2, 
-                                  self.width, self.height)
-            
-            if car_rect.colliderect(checkpoint):
-                self.checkpoints_passed.append(self.current_checkpoint)
-                self.current_checkpoint += 1
-                
-                if self.current_checkpoint >= len(checkpoints):
-                    self.laps_completed += 1
-                    self.current_checkpoint = 0
-                    print(f"Car completed lap {self.laps_completed}!")
 
     def cast_ray(self, angle, track_points):
         ray_angle = math.radians(self.angle + angle)
@@ -276,7 +257,9 @@ def draw_neural_network(car, x_pos, y_pos):
                 text = font_small.render(f"{label}: {value:.2f}", True, WHITE)
                 screen.blit(text, (layer_x + 70, base_y - layer_y_start + i * node_spacing - 8 + y_offset))
 
-                
+
+
+
 def create_oval_track():
     track_points = []
     center_x, center_y = WIDTH // 2, HEIGHT // 2
