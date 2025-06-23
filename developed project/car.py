@@ -1,291 +1,14 @@
+"""
+Car class and related functionality
+Handles car physics, AI movement, and rendering
+"""
 import pygame
-import random
 import math
+import random
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-from osm_roads import OSMRoadSystem
-from camera import Camera
-import heapq
-from collections import defaultdict
+from ai_models import AdvancedCarAI, CarAI
 
-pygame.init()
-
-WIDTH, HEIGHT = 1920, 1080
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("AI Cars Learning on Real Roads")
-
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (255, 0, 0)
-GREEN = (0, 255, 0)
-BLUE = (0, 0, 255)
-YELLOW = (255, 255, 0)
-GRAY = (128, 128, 128)
-
-clock = pygame.time.Clock()
-FPS = 60
-
-class AdvancedCarAI(nn.Module):
-    def __init__(self, input_size=24, hidden_size=256, output_size=6):
-        super(AdvancedCarAI, self).__init__()
-        
-        self.network = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_size // 2, hidden_size // 4),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 4, output_size),
-            nn.Tanh()
-        )
-        
-        for layer in self.network:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
-                nn.init.zeros_(layer.bias)
-        
-    def forward(self, x):
-        return self.network(x)
-
-class CheckpointSystem:
-    def __init__(self, pathfinder, num_checkpoints=8, min_checkpoint_distance=300):
-        self.pathfinder = pathfinder
-        self.num_checkpoints = num_checkpoints
-        self.min_checkpoint_distance = min_checkpoint_distance
-        self.checkpoints = []
-        self.checkpoint_radius = 75
-        self._generate_checkpoints()
-    
-    def _generate_checkpoints(self):
-        if not self.pathfinder.node_graph['positions']:
-            return
-        
-        available_nodes = list(self.pathfinder.node_graph['positions'].keys())
-        if len(available_nodes) < self.num_checkpoints:
-            self.num_checkpoints = len(available_nodes)
-        
-        self.checkpoints = []
-        used_nodes = set()
-        
-        if available_nodes:
-            first_checkpoint = random.choice(available_nodes)
-            self.checkpoints.append(first_checkpoint)
-            used_nodes.add(first_checkpoint)
-        
-        for i in range(1, self.num_checkpoints):
-            best_candidate = None
-            best_distance = 0
-            
-            for node_id in available_nodes:
-                if node_id in used_nodes:
-                    continue
-                
-                min_dist_to_existing = float('inf')
-                for existing_checkpoint in self.checkpoints:
-                    existing_pos = self.pathfinder.node_graph['positions'][existing_checkpoint]
-                    candidate_pos = self.pathfinder.node_graph['positions'][node_id]
-                    dist = math.sqrt(
-                        (existing_pos[0] - candidate_pos[0])**2 + 
-                        (existing_pos[1] - candidate_pos[1])**2
-                    )
-                    min_dist_to_existing = min(min_dist_to_existing, dist)
-                
-                if min_dist_to_existing >= self.min_checkpoint_distance:
-                    if min_dist_to_existing > best_distance:
-                        best_distance = min_dist_to_existing
-                        best_candidate = node_id
-            
-            if best_candidate:
-                self.checkpoints.append(best_candidate)
-                used_nodes.add(best_candidate)
-            elif available_nodes:
-                remaining_nodes = [n for n in available_nodes if n not in used_nodes]
-                if remaining_nodes:
-                    self.checkpoints.append(random.choice(remaining_nodes))
-        
-        print(f"Generated {len(self.checkpoints)} checkpoints")
-        for i, checkpoint in enumerate(self.checkpoints):
-            pos = self.pathfinder.node_graph['positions'][checkpoint]
-            print(f"  Checkpoint {i+1}: ({pos[0]:.1f}, {pos[1]:.1f})")
-    
-    def get_checkpoint_position(self, checkpoint_index):
-        if 0 <= checkpoint_index < len(self.checkpoints):
-            checkpoint_id = self.checkpoints[checkpoint_index]
-            return self.pathfinder.node_graph['positions'].get(checkpoint_id)
-        return None
-    
-    def get_next_checkpoint_for_car(self, car):
-        if not hasattr(car, 'current_checkpoint_index'):
-            car.current_checkpoint_index = 0
-        
-        current_pos = self.get_checkpoint_position(car.current_checkpoint_index)
-        if current_pos:
-            distance = math.sqrt((car.x - current_pos[0])**2 + (car.y - current_pos[1])**2)
-            if distance < self.checkpoint_radius:
-                car.current_checkpoint_index += 1
-                car.checkpoint_reached_bonus = car.current_checkpoint_index * 100
-                print(f"Car reached checkpoint {car.current_checkpoint_index}!")
-        
-        next_index = car.current_checkpoint_index % len(self.checkpoints)
-        return self.checkpoints[next_index] if self.checkpoints else None
-    
-    def draw_checkpoints(self, screen, camera, current_checkpoint_index=0):
-        for i, checkpoint_id in enumerate(self.checkpoints):
-            pos = self.pathfinder.node_graph['positions'].get(checkpoint_id)
-            if pos:
-                screen_pos = camera.world_to_screen(pos[0], pos[1])
-                
-                if i < current_checkpoint_index:
-                    color = (0, 255, 0)
-                    outline_color = (0, 150, 0)
-                elif i == current_checkpoint_index:
-                    pulse = int(50 + 25 * math.sin(pygame.time.get_ticks() * 0.01))
-                    color = (255, 255, 0)
-                    outline_color = (255, 150, 0)
-                    pygame.draw.circle(screen, outline_color, screen_pos, pulse, 3)
-                else:
-                    color = (100, 150, 255)
-                    outline_color = (50, 100, 200)
-                
-                pygame.draw.circle(screen, color, screen_pos, 30, 4)
-                pygame.draw.circle(screen, outline_color, screen_pos, 20, 2)
-                
-                font = pygame.font.Font(None, 24)
-                text = font.render(str(i + 1), True, (255, 255, 255))
-                text_rect = text.get_rect(center=screen_pos)
-                screen.blit(text, text_rect)
-
-class AStarPathfinder:
-    def __init__(self, road_system):
-        self.road_system = road_system
-        self.node_graph = self._build_node_graph()
-        
-    def _build_node_graph(self):
-        nodes = {}
-        connections = defaultdict(list)
-        
-        node_id = 0
-        position_tolerance = 20
-        
-        for segment in self.road_system.road_segments:
-            for point in [segment.start, segment.end]:
-                existing_node = None
-                for pos, nid in nodes.items():
-                    if math.sqrt((pos[0] - point[0])**2 + (pos[1] - point[1])**2) < position_tolerance:
-                        existing_node = nid
-                        break
-                
-                if existing_node is None:
-                    nodes[point] = node_id
-                    node_id += 1
-        
-        for segment in self.road_system.road_segments:
-            start_node = None
-            end_node = None
-            
-            for pos, nid in nodes.items():
-                if math.sqrt((pos[0] - segment.start[0])**2 + (pos[1] - segment.start[1])**2) < position_tolerance:
-                    start_node = nid
-                if math.sqrt((pos[0] - segment.end[0])**2 + (pos[1] - segment.end[1])**2) < position_tolerance:
-                    end_node = nid
-            
-            if start_node is not None and end_node is not None and start_node != end_node:
-                connections[start_node].append(end_node)
-                connections[end_node].append(start_node)
-        
-        node_positions = {}
-        for pos, nid in nodes.items():
-            node_positions[nid] = pos
-        
-        return {
-            'positions': node_positions,
-            'connections': dict(connections),
-            'nodes_by_position': nodes
-        }
-    
-    def get_nearest_node(self, x, y):
-        if not self.node_graph['positions']:
-            return None
-        
-        min_distance = float('inf')
-        nearest_node = None
-        
-        for node_id, pos in self.node_graph['positions'].items():
-            distance = math.sqrt((x - pos[0])**2 + (y - pos[1])**2)
-            if distance < min_distance:
-                min_distance = distance
-                nearest_node = node_id
-        
-        return nearest_node
-    
-    def find_path(self, start_x, start_y, target_x, target_y):
-        start_node = self.get_nearest_node(start_x, start_y)
-        target_node = self.get_nearest_node(target_x, target_y)
-        
-        if start_node is None or target_node is None or start_node == target_node:
-            return []
-        
-        open_set = [(0, start_node)]
-        came_from = {}
-        g_score = {start_node: 0}
-        f_score = {start_node: self._heuristic(start_node, target_node)}
-        
-        while open_set:
-            current_f, current = heapq.heappop(open_set)
-            
-            if current == target_node:
-                path = []
-                while current in came_from:
-                    path.append(current)
-                    current = came_from[current]
-                path.append(start_node)
-                return list(reversed(path))
-            
-            for neighbor in self.node_graph['connections'].get(current, []):
-                tentative_g = g_score[current] + self._distance(current, neighbor)
-                
-                if neighbor not in g_score or tentative_g < g_score[neighbor]:
-                    came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g
-                    f_score[neighbor] = tentative_g + self._heuristic(neighbor, target_node)
-                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
-        
-        return []
-    
-    def _heuristic(self, node1, node2):
-        pos1 = self.node_graph['positions'][node1]
-        pos2 = self.node_graph['positions'][node2]
-        return math.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
-    
-    def _distance(self, node1, node2):
-        return self._heuristic(node1, node2)
-
-class CarAI(nn.Module):
-    def __init__(self, input_size=12, hidden_size=128, output_size=4):
-        super(CarAI, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 2, output_size),
-            nn.Tanh()
-        )
-    
-    def forward(self, x):
-        return self.network(x)
 
 class Car:
     def __init__(self, x, y, color, use_ai=False, road_system=None, pathfinder=None, checkpoint_system=None):
@@ -329,7 +52,7 @@ class Car:
         self.movement_smoothness = 0
         
         self.stationary_timer = 0
-        self.stationary_threshold = 2 * FPS
+        self.stationary_threshold = 2 * 60  # 2 seconds at 60 FPS
         self.min_movement_distance = 40.0
         self.last_position = (x, y)
         self.movement_check_interval = 30
@@ -354,7 +77,8 @@ class Car:
                 self.ai = CarAI()
             self.randomize_weights()
             self._update_pathfinding()
-    def draw(self, camera, is_best=False):
+    
+    def draw(self, screen, camera, is_best=False):
         screen_x, screen_y = camera.world_to_screen(self.x, self.y)
         
         if (screen_x < -50 or screen_x > camera.screen_width + 50 or 
@@ -373,8 +97,8 @@ class Car:
         screen.blit(rotated_surface, rotated_rect.topleft)
         
         if is_best:
-            self.draw_predicted_path(camera)
-            self.draw_raycasts(camera)
+            self.draw_predicted_path(screen, camera)
+            self.draw_raycasts(screen, camera)
     
     def move(self, keys):
         if self.use_ai:
@@ -489,7 +213,11 @@ class Car:
                 self.make_intersection_decision()
         else:
             self.intersection_detected = False
-    def draw_raycasts(self, camera):
+    
+    def draw_raycasts(self, screen, camera):
+        YELLOW = (255, 255, 0)
+        RED = (255, 0, 0)
+        
         for i, angle_offset in enumerate(self.raycast_angles):
             if i < len(self.raycast_distances):
                 distance = self.raycast_distances[i]
@@ -754,7 +482,7 @@ class Car:
                 mutation = torch.randn_like(param) * mutation_strength
                 param.data += mutation_mask.float() * mutation
 
-    def draw_predicted_path(self, camera):
+    def draw_predicted_path(self, screen, camera):
         if self.current_path and self.pathfinder:
             path_points = []
             for i, node_id in enumerate(self.current_path):
@@ -993,207 +721,3 @@ class Car:
             return 0
         
         return distance_to_waypoint
-def evolve_population(cars, population_size=30, road_system=None, pathfinder=None, checkpoint_system=None):
-    for car in cars:
-        car.calculate_fitness()
-    cars.sort(key=lambda x: x.fitness, reverse=True)
-    print(f"Generation evolved! Best fitness: {cars[0].fitness:.2f}")
-    
-    if cars[0].checkpoint_system and hasattr(cars[0], 'current_checkpoint_index'):
-        print(f"Best car checkpoint progress: {cars[0].current_checkpoint_index}/{cars[0].checkpoint_system.num_checkpoints}")
-        if hasattr(cars[0], 'checkpoint_reached_bonus'):
-            print(f"Checkpoint bonus: {cars[0].checkpoint_reached_bonus}")
-    
-    elite_count = max(1, population_size // 5)
-    elites = cars[:elite_count]
-    new_cars = []
-    
-    for elite in elites:
-        new_car = elite.clone()
-        spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point() if road_system else (0, 0, 0)
-        new_car.x = spawn_x
-        new_car.y = spawn_y
-        new_car.angle = spawn_angle
-        new_car.speed = 0
-        new_car.crashed = False
-        new_car.fitness = 0
-        new_car.time_alive = 0
-        new_car.distance_traveled = 0
-        new_car.off_road_time = 0
-        new_car.stationary_timer = 0
-        new_car.last_position = (spawn_x, spawn_y)
-        new_car.frames_since_movement_check = 0
-        new_car.current_path = []
-        new_car.path_index = 0
-        new_car.next_waypoint = None
-        new_car.path_following_accuracy = 0
-        new_car.reached_target_bonus = 0
-        new_car.current_checkpoint_index = 0
-        new_car.checkpoint_reached_bonus = 0
-        if hasattr(new_car.ai, 'hidden_state'):
-            new_car.ai.hidden_state = None
-            new_car.ai.memory_sequence = []
-        new_cars.append(new_car)
-    while len(new_cars) < population_size:
-        parent_index = random.randint(0, min(len(cars) - 1, population_size // 2 - 1))
-        parent = cars[parent_index]
-        offspring = parent.clone()
-        
-        base_mutation_rate = 0.12
-        base_mutation_strength = 0.25
-        
-        if parent.fitness > cars[0].fitness * 0.8:
-            offspring.mutate(mutation_rate=base_mutation_rate * 0.7, 
-                           mutation_strength=base_mutation_strength * 0.8)
-        else:
-            offspring.mutate(mutation_rate=base_mutation_rate * 1.3, 
-                           mutation_strength=base_mutation_strength * 1.2)
-        
-        spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point() if road_system else (0, 0, 0)
-        offspring.x = spawn_x
-        offspring.y = spawn_y
-        offspring.angle = spawn_angle
-        offspring.speed = 0
-        offspring.crashed = False
-        offspring.fitness = 0
-        offspring.time_alive = 0
-        offspring.distance_traveled = 0
-        offspring.off_road_time = 0
-        offspring.stationary_timer = 0
-        offspring.last_position = (spawn_x, spawn_y)
-        offspring.frames_since_movement_check = 0
-        offspring.current_path = []
-        offspring.path_index = 0
-        offspring.next_waypoint = None
-        offspring.path_following_accuracy = 0
-        offspring.reached_target_bonus = 0
-        offspring.current_checkpoint_index = 0
-        offspring.checkpoint_reached_bonus = 0
-        if hasattr(offspring.ai, 'hidden_state'):
-            offspring.ai.hidden_state = None
-            offspring.ai.memory_sequence = []
-        offspring.color = random.choice([RED, GREEN, BLUE])
-        new_cars.append(offspring)
-    
-    return new_cars
-
-
-print("Loading road system...")
-road_system = OSMRoadSystem(center_lat=-36.8825825, center_lon=174.9143453, radius=1000)
-
-print("Building pathfinding graph...")
-pathfinder = AStarPathfinder(road_system)
-
-print("Setting up checkpoint system...")
-checkpoint_system = CheckpointSystem(pathfinder, num_checkpoints=10, min_checkpoint_distance=250)
-
-camera = Camera(0, 0, WIDTH, HEIGHT)
-road_bounds = road_system.get_road_bounds()
-camera.set_bounds(*road_bounds)
-
-population_size = 50
-cars = []
-for i in range(population_size):
-    spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point()
-    color = random.choice([RED, GREEN, BLUE])
-    car = Car(spawn_x, spawn_y, color, use_ai=True, road_system=road_system, 
-             pathfinder=pathfinder, checkpoint_system=checkpoint_system)
-    cars.append(car)
-
-checkpoint_system = CheckpointSystem(pathfinder, num_checkpoints=8, min_checkpoint_distance=300)
-
-evolution_timer = 0
-generation = 1
-evolution_interval = 8 * FPS  
-
-running = True
-while running:
-    screen.fill((34, 139, 34))
-    
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r:
-                print("Resetting to new location...")
-                road_system = OSMRoadSystem(
-                    center_lat=random.uniform(-40, 50), 
-                    center_lon=random.uniform(-120, 120), 
-                    radius=1000
-                )
-                road_bounds = road_system.get_road_bounds()
-                camera.set_bounds(*road_bounds)
-                 
-                pathfinder = AStarPathfinder(road_system)
-                
-                checkpoint_system = CheckpointSystem(pathfinder, num_checkpoints=10, min_checkpoint_distance=250)
-
-                for car in cars:
-                    if not car.crashed:
-                        spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point()
-                        car.x, car.y, car.angle = spawn_x, spawn_y, spawn_angle
-                        car.road_system = road_system
-                        car.pathfinder = pathfinder
-                        car.checkpoint_system = checkpoint_system
-                        car.current_checkpoint_index = 0
-                        car._update_pathfinding()
-    
-    keys = pygame.key.get_pressed()
-    
-    alive_cars = 0
-    best_car = None
-    for car in cars:
-        if not car.crashed:
-            if evolution_timer % 30 == 0:
-                car.calculate_fitness()
-            if best_car is None or car.fitness > best_car.fitness:
-                best_car = car
-            alive_cars += 1
-    
-    if best_car and not camera.manual_mode:
-        camera.follow_target(best_car.x, best_car.y)
-    camera.update(keys)
-    
-    road_system.draw_roads(screen, camera.x, camera.y, WIDTH, HEIGHT, camera.zoom)
-      # Draw checkpoints
-    if checkpoint_system and best_car:
-        checkpoint_system.draw_checkpoints(screen, camera, 
-                                          getattr(best_car, 'current_checkpoint_index', 0))
-    
-    for car in cars:
-        if not car.crashed:
-            car.move(keys)
-            is_best = (car == best_car)
-            if is_best or evolution_timer % 3 == 0:
-                car.update_raycasts()
-            
-            car.draw(camera, is_best)
-    
-    checkpoint_system.draw_checkpoints(screen, camera)
-    
-    evolution_timer += 1
-    if evolution_timer >= evolution_interval or alive_cars == 0:
-        cars = evolve_population(cars, population_size, road_system, pathfinder, checkpoint_system)
-        evolution_timer = 0
-        generation += 1
-        print(f"Generation {generation} started")
-    
-    font = pygame.font.Font(None, 36)
-    info_text = f"Gen: {generation} | Alive: {alive_cars} | Time: {evolution_timer // FPS}s"
-    if best_car:
-        info_text += f" | Best Fitness: {best_car.fitness:.1f}"
-    
-    text_surface = font.render(info_text, True, WHITE)
-    text_rect = text_surface.get_rect()
-    text_rect.topleft = (10, 10)
-    
-    pygame.draw.rect(screen, (0, 0, 0, 128), text_rect.inflate(10, 5))
-    screen.blit(text_surface, text_rect)
-    
-    if best_car and evolution_timer % 10 == 0:
-        pass
-
-    pygame.display.flip()
-    clock.tick(FPS)
-
-pygame.quit()
