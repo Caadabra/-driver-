@@ -17,3 +17,4 @@ testing/main.py
 testing/player_data.json
 testing/__pycache__/adaptive_puzzle.cpython-310.pyc
 testing/__pycache__/game_core.cpython-310.pyc
+testing/game_core_fixed.py
