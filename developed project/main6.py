@@ -12,7 +12,7 @@ from collections import defaultdict
 
 pygame.init()
 
-WIDTH, HEIGHT = 1920, 1080
+WIDTH, HEIGHT = 1280, 720
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("AI Cars Learning on Real Roads")
 
@@ -27,23 +27,51 @@ GRAY = (128, 128, 128)
 clock = pygame.time.Clock()
 FPS = 60
 
-# Performance optimization globals
-frame_counter = 0
-raycast_update_interval = 3  # Update raycasts every 3 frames
-fitness_update_interval = 90  # Update fitness every 90 frames (1.5 seconds)
-pathfinding_update_interval = 180  # Update pathfinding every 180 frames (3 seconds)
+# Raycast configuration
+NUM_RAYCASTS = 7  # Number of raycasts to generate (must be odd for symmetric distribution)
+RAYCAST_SPREAD = 180  # Total angle spread in degrees (e.g., 180 for -90 to +90)
+
+def set_raycast_config(num_rays, spread_degrees=180):
+    """
+    Change the raycast configuration. 
+    
+    Args:
+        num_rays: Number of raycasts (will be made odd for symmetry)
+        spread_degrees: Total angle spread in degrees
+    
+    Note: Call this before creating any Car objects to take effect.
+    
+    Examples:
+        set_raycast_config(5, 90)    # 5 rays spanning 90° (-45° to +45°)
+        set_raycast_config(9, 180)   # 9 rays spanning 180° (-90° to +90°)
+        set_raycast_config(11, 270)  # 11 rays spanning 270° (-135° to +135°)
+    """
+    global NUM_RAYCASTS, RAYCAST_SPREAD
+    # Ensure odd number for symmetric distribution
+    NUM_RAYCASTS = num_rays if num_rays % 2 == 1 else num_rays + 1
+    RAYCAST_SPREAD = spread_degrees
+    print(f"Raycast config updated: {NUM_RAYCASTS} rays with {RAYCAST_SPREAD}° spread")
+
+# Uncomment and modify the line below to change raycast configuration:
+# set_raycast_config(9, 180)  # Example: 9 rays with 180° spread
 
 class AdvancedCarAI(nn.Module):
-    def __init__(self, input_size=24, hidden_size=128, output_size=6):  # Reduced from 256 to 128
+    def __init__(self, input_size=24, hidden_size=256, output_size=6):
         super(AdvancedCarAI, self).__init__()
         
-        # Simplified network architecture for better performance
         self.network = nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(),
-            nn.Linear(hidden_size // 2, output_size),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size // 2, hidden_size // 4),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 4, output_size),
             nn.Tanh()
         )
         
@@ -190,7 +218,7 @@ class Car:
         self.height = 20/1.4
         
         self.raycast_length = 120        
-        self.raycast_angles = [-90, -60, -30, 0, 30, 60, 90]
+        self.raycast_angles = self._generate_raycast_angles(NUM_RAYCASTS, RAYCAST_SPREAD)
         self.raycast_distances = []
         
         self.short_raycast_length = 40
@@ -238,11 +266,33 @@ class Car:
         
         if self.use_ai:
             if self.use_advanced_ai:
-                self.ai = AdvancedCarAI(input_size=24, hidden_size=256, output_size=6)
+                # Calculate input size dynamically based on number of raycasts
+                ai_input_size = NUM_RAYCASTS + 17  # raycasts + speed + intersection + target_dir + target_dist + path_progress + pathfinding_features(12)
+                self.ai = AdvancedCarAI(input_size=ai_input_size, hidden_size=256, output_size=6)
             else:
                 self.ai = CarAI()
             self.randomize_weights()
             self._update_pathfinding()
+    
+    def _generate_raycast_angles(self, num_rays, spread_degrees):
+        """Generate evenly distributed raycast angles"""
+        if num_rays == 1:
+            return [0]
+        
+        # Ensure we have an odd number for symmetric distribution
+        if num_rays % 2 == 0:
+            num_rays += 1
+        
+        half_spread = spread_degrees / 2
+        angles = []
+        
+        # Generate angles symmetrically around 0
+        for i in range(num_rays):
+            angle = -half_spread + (i * spread_degrees) / (num_rays - 1)
+            angles.append(angle)
+        
+        return angles
+
     def draw(self, camera, is_best=False):
         screen_x, screen_y = camera.world_to_screen(self.x, self.y)
         
@@ -422,15 +472,25 @@ class Car:
         self.detect_intersection()
     
     def detect_intersection(self):
-        if len(self.raycast_distances) < 7:
+        if len(self.raycast_distances) < 3:  # Need at least 3 rays for basic detection
             return
         
-        left_opening = self.raycast_distances[0] > self.raycast_length * 0.8  # -90 degrees
-        right_opening = self.raycast_distances[6] > self.raycast_length * 0.8  # +90 degrees
-        forward_clear = self.raycast_distances[3] > self.raycast_length * 0.6  # 0 degrees
+        # Find indices for left, center, and right rays
+        num_rays = len(self.raycast_distances)
+        left_idx = 0
+        center_idx = num_rays // 2
+        right_idx = num_rays - 1
         
-        far_left_clear = self.raycast_distances[1] > self.raycast_length * 0.7  # -60 degrees
-        far_right_clear = self.raycast_distances[5] > self.raycast_length * 0.7  # +60 degrees
+        # Additional indices for more detailed detection if available
+        far_left_idx = min(1, num_rays - 1) if num_rays > 3 else 0
+        far_right_idx = max(num_rays - 2, 0) if num_rays > 3 else right_idx
+        
+        left_opening = self.raycast_distances[left_idx] > self.raycast_length * 0.8
+        right_opening = self.raycast_distances[right_idx] > self.raycast_length * 0.8
+        forward_clear = self.raycast_distances[center_idx] > self.raycast_length * 0.6
+        
+        far_left_clear = self.raycast_distances[far_left_idx] > self.raycast_length * 0.7
+        far_right_clear = self.raycast_distances[far_right_idx] > self.raycast_length * 0.7
         
         self.frames_since_intersection += 1
         
@@ -464,7 +524,7 @@ class Car:
             param.data.uniform_(-1, 1)
     
     def ai_move(self):
-        if len(self.raycast_distances) < 7 or len(self.short_raycast_distances) < 3:
+        if len(self.raycast_distances) < NUM_RAYCASTS or len(self.short_raycast_distances) < 3:
             return
         
         if self.time_alive % 60 == 0:
@@ -752,26 +812,11 @@ class Car:
             distance = path_length * t
             point_x = start_x + math.sin(math.radians(current_angle)) * distance
             point_y = start_y - math.cos(math.radians(current_angle)) * distance
-            
+        
             if self.road_system and not self.road_system.is_point_on_road(point_x, point_y):
                 distance *= 0.7
                 point_x = start_x + math.sin(math.radians(current_angle)) * distance
                 point_y = start_y - math.cos(math.radians(current_angle)) * distance
-            
-            screen_point = camera.world_to_screen(point_x, point_y)
-            immediate_path_points.append(screen_point)
-        
-        if len(immediate_path_points) > 1:
-            for i in range(len(immediate_path_points) - 1):
-                progress = i / (len(immediate_path_points) - 1)
-                thickness = max(1, int(4 * (1 - progress * 0.7)))  
-                
-                red = 255
-                green = int(255 * (1 - progress * 0.4))
-                blue = int(50 * (1 - progress))
-                color = (red, green, blue)
-                
-                pygame.draw.line(screen, color, immediate_path_points[i], immediate_path_points[i + 1], thickness)
         
         if len(immediate_path_points) >= 2:
             end_point = immediate_path_points[-1]
@@ -809,14 +854,20 @@ class Car:
     def make_intersection_decision(self):
         available_directions = []
         
-        if len(self.raycast_distances) >= 7:
-            if self.raycast_distances[0] > self.raycast_length * 0.6:
+        if len(self.raycast_distances) >= 3:
+            # Find indices for left, center, and right rays
+            num_rays = len(self.raycast_distances)
+            left_idx = 0
+            center_idx = num_rays // 2
+            right_idx = num_rays - 1
+            
+            if self.raycast_distances[left_idx] > self.raycast_length * 0.6:
                 available_directions.append("left")
             
-            if self.raycast_distances[6] > self.raycast_length * 0.6:
+            if self.raycast_distances[right_idx] > self.raycast_length * 0.6:
                 available_directions.append("right")
             
-            if self.raycast_distances[3] > self.raycast_length * 0.5:
+            if self.raycast_distances[center_idx] > self.raycast_length * 0.5:
                 available_directions.append("forward")
         
         if available_directions:
@@ -904,12 +955,12 @@ class Car:
         features[6] = min(1.0, abs(self.speed) / optimal_speed)
         
         open_directions = 0
-        if len(self.raycast_distances) >= 7:
+        if len(self.raycast_distances) >= NUM_RAYCASTS:
             threshold = self.raycast_length * 0.6
             for distance in self.raycast_distances:
                 if distance > threshold:
                     open_directions += 1
-        features[7] = min(1.0, open_directions / 7.0)
+        features[7] = min(1.0, open_directions / max(1, NUM_RAYCASTS))  # Normalize by actual number of raycasts
         
         features[8] = min(1.0, self.time_alive % 180 / 180.0)  
         
@@ -1046,7 +1097,7 @@ camera = Camera(0, 0, WIDTH, HEIGHT)
 road_bounds = road_system.get_road_bounds()
 camera.set_bounds(*road_bounds)
 
-population_size = 120
+population_size = 10
 cars = []
 
 # Calculate initial road angle based on the first path segment
@@ -1168,6 +1219,15 @@ while running:
     
     pygame.draw.rect(screen, (0, 0, 0, 128), text_rect.inflate(10, 5))
     screen.blit(text_surface, text_rect)
+    
+    # Display raycast configuration
+    raycast_info = f"Raycasts: {NUM_RAYCASTS} rays | Spread: {RAYCAST_SPREAD}°"
+    raycast_surface = font.render(raycast_info, True, WHITE)
+    raycast_rect = raycast_surface.get_rect()
+    raycast_rect.topleft = (10, text_rect.bottom + 10)
+    
+    pygame.draw.rect(screen, (0, 0, 0, 128), raycast_rect.inflate(10, 5))
+    screen.blit(raycast_surface, raycast_rect)
     
     if best_car and evolution_timer % 10 == 0:
         pass
