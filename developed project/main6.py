@@ -418,14 +418,6 @@ class Car:
             distance = math.sqrt((self.x - prev_x)**2 + (self.y - prev_y)**2)
             self.distance_traveled += distance
             self.time_alive += 1
-            
-            # Update speed history for enhanced speed rewards
-            self.speed_update_counter += 1
-            if self.speed_update_counter >= 10:  # Update every 10 frames
-                self.speed_history.append(self.speed)
-                if len(self.speed_history) > 30:  # Keep last 30 speed samples
-                    self.speed_history.pop(0)
-                self.speed_update_counter = 0
 
         # Apply friction
         self.speed *= 0.95
