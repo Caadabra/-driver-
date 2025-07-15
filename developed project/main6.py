@@ -28,7 +28,7 @@ YELLOW = (255, 255, 0)
 GRAY = (128, 128, 128)
 
 clock = pygame.time.Clock()
-FPS = 120  # 2x faster than original 60 FPS
+FPS = 120 
 
 # Global variables for tracking statistics
 fitness_history = deque(maxlen=100)  # Keep last 100 generations
@@ -619,8 +619,10 @@ class Car:
         # Massive bonus for reaching destination (saved state)
         destination_bonus = 0
         if self.destination_reached or self.saved_state:
-            destination_bonus = 10000  # Huge bonus for reaching destination
-        
+            destination_bonus = 10000  # Huge bonus for reaching destination + time bonus
+            if self.time_alive < 600:
+                destination_bonus += (600 - self.time_alive) * 10
+
         # Penalties
         crash_penalty = 300 if self.crashed else 0  # Higher crash penalty
         off_road_penalty = self.off_road_time * 5  # Higher off-road penalty
@@ -1316,7 +1318,7 @@ print("Starting AI cars with Dijkstra pathfinding evolution...")
 running = True
 while running:
     screen.fill((34, 139, 34))  # Dark green background
-    
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             print("Saving population before exit...")
