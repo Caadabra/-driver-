@@ -1,477 +1,890 @@
 import sys
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QLineEdit, QPushButton, QLabel, 
-                             QSplitter, QTextEdit, QListWidget, 
-                             QListWidgetItem, QMessageBox)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QUrl
-from PyQt5.QtGui import QFont
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-import folium
-import tempfile
 import os
-import time
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QTimer, QPropertyAnimation, QEasingCurve, QRect, QPoint
+from PyQt6.QtGui import QFont, QPalette, QColor, QPainter, QBrush, QLinearGradient
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 
-def create_session():
-    """Create a requests session with retry strategy"""
-    session = requests.Session()
-    
-    # Define retry strategy
-    retry_strategy = Retry(
-        total=3,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-    )
-    
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    
-    return session
 
-class GeolocationThread(QThread):
-    """Thread for getting user's current location using IP geolocation"""
-    location_ready = pyqtSignal(float, float, str)
-    error_occurred = pyqtSignal(str)
+class MainGUIView(QWebEngineView):
+    locationSelected = pyqtSignal(str)
     
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        
-    def run(self):
-        try:
-            # Try multiple IP geolocation services
-            services = [
-                "http://ip-api.com/json/",
-                "https://ipapi.co/json/",
-                "https://ipinfo.io/json"
-            ]
-            
-            for service_url in services:
-                try:
-                    response = requests.get(
-                        service_url, 
-                        timeout=10,
-                        headers={'User-Agent': 'LocationGUI/1.0'}
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    
-                    # Extract coordinates based on service
-                    if "ip-api.com" in service_url:
-                        lat = data.get('lat')
-                        lon = data.get('lon')
-                        location_name = f"{data.get('city', 'Unknown')}, {data.get('country', 'Unknown')}"
-                    elif "ipapi.co" in service_url:
-                        lat = data.get('latitude')
-                        lon = data.get('longitude')
-                        location_name = f"{data.get('city', 'Unknown')}, {data.get('country_name', 'Unknown')}"
-                    elif "ipinfo.io" in service_url:
-                        loc = data.get('loc', '').split(',')
-                        if len(loc) == 2:
-                            lat = float(loc[0])
-                            lon = float(loc[1])
-                        else:
-                            continue
-                        location_name = f"{data.get('city', 'Unknown')}, {data.get('country', 'Unknown')}"
-                    
-                    if lat and lon:
-                        self.location_ready.emit(float(lat), float(lon), location_name)
-                        return
-                        
-                except requests.exceptions.ConnectionError:
-                    continue
-                except requests.exceptions.Timeout:
-                    continue
-                except Exception as e:
-                    continue
-            
-            # If all services fail, emit error
-            self.error_occurred.emit("Unable to determine location from any service")
-            
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-
-class AddressSearchThread(QThread):
-    """Thread for searching addresses using Nominatim API"""
-    results_ready = pyqtSignal(list)
-    error_occurred = pyqtSignal(str)
-    
-    def __init__(self, query, parent=None):
-        super().__init__(parent)
-        self.query = query
-        
-    def run(self):
-        try:
-            # Create session with retry strategy
-            session = create_session()
-            
-            # Use Nominatim API for address search
-            url = "https://nominatim.openstreetmap.org/search"
-            params = {
-                'q': self.query,
-                'format': 'json',
-                'limit': 10,
-                'addressdetails': 1
-            }
-            
-            headers = {
-                'User-Agent': 'LocationGUI/1.0 (contact@example.com)'
-            }
-            
-            # Retry logic
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    response = session.get(
-                        url, 
-                        params=params, 
-                        headers=headers, 
-                        timeout=15
-                    )
-                    response.raise_for_status()
-                    
-                    data = response.json()
-                    
-                    # Format results
-                    formatted_results = []
-                    for item in data:
-                        display_name = item.get('display_name', '')
-                        lat = float(item.get('lat', 0))
-                        lon = float(item.get('lon', 0))
-                        
-                        formatted_results.append({
-                            'display_name': display_name,
-                            'lat': lat,
-                            'lon': lon
-                        })
-                    
-                    self.results_ready.emit(formatted_results)
-                    return
-                    
-                except requests.exceptions.ConnectionError as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(1)  # Wait before retry
-                        continue
-                    else:
-                        self.error_occurred.emit(f"Connection failed after {max_retries} attempts. Check your internet connection.")
-                        return
-                        
-                except requests.exceptions.Timeout as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(1)  # Wait before retry
-                        continue
-                    else:
-                        self.error_occurred.emit(f"Request timed out after {max_retries} attempts. Server may be busy.")
-                        return
-                        
-                except requests.exceptions.HTTPError as e:
-                    self.error_occurred.emit(f"HTTP error: {e}")
-                    return
-                    
-                except requests.exceptions.RequestException as e:
-                    self.error_occurred.emit(f"Request failed: {str(e)}")
-                    return
-                    
-            session.close()
-                    
-        except Exception as e:
-            self.error_occurred.emit(f"Unexpected error: {str(e)}")
-
-class LocationGUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.current_lat = 40.7128  # Default to NYC
-        self.current_lon = -74.0060
-        self.search_results = []
-        self.temp_file = None
-        self.location_name = "Default Location"
+        self.setStyleSheet("background-color: black;")
+        self.current_state = "search"  # "search", "routing", "navigation"
         
-        self.init_ui()
-        self.get_user_location()  # Get user's location on startup
+        # Create HTML content with embedded main GUI
+        html_content = self.create_html_content()
         
-    def init_ui(self):
-        """Initialize the user interface"""
-        self.setWindowTitle("Location Search with OSM Map")
-        self.setGeometry(100, 100, 1200, 800)
+        # Load the HTML content
+        self.setHtml(html_content)
         
-        # Set application style
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f0f0f0;
-            }
-            QWidget {
-                font-family: 'Segoe UI', Arial, sans-serif;
-                font-size: 10pt;
-            }
-            QLineEdit {
-                padding: 8px;
-                border: 2px solid #ddd;
-                border-radius: 4px;
-                background-color: white;
-            }
-            QLineEdit:focus {
-                border-color: #4CAF50;
-            }
-            QPushButton {
-                padding: 8px 16px;
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-            QListWidget {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                background-color: white;
-                selection-background-color: #e3f2fd;
-            }
-            QListWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #eee;
-            }
-            QListWidget::item:hover {
-                background-color: #f5f5f5;
-            }
-            QLabel {
-                color: #333;
-            }
-        """)
-        
-        # Create central widget and main layout
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # Create splitter for sidebar and main area
-        splitter = QSplitter(Qt.Horizontal)
-        
-        # Create sidebar
-        sidebar = self.create_sidebar()
-        sidebar.setMaximumWidth(350)
-        sidebar.setMinimumWidth(300)
-        # Create map area
-        self.map_view = QWebEngineView()
-        splitter.addWidget(sidebar)
-        splitter.addWidget(self.map_view)
-        
-        # Set splitter proportions
-        splitter.setSizes([300, 900])
-        
-        # Set main layout
-        main_layout = QHBoxLayout()
-        main_layout.addWidget(splitter)
-        central_widget.setLayout(main_layout)
-        
-    def create_sidebar(self):
-        """Create the sidebar with address search functionality"""
-        sidebar = QWidget()
-        sidebar.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                border-right: 1px solid #ddd;
-            }
-        """)
-        
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Title
-        title = QLabel("Location Search")
-        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        title.setStyleSheet("color: #2c3e50; margin-bottom: 10px;")
-        layout.addWidget(title)
-        
-        # Search input
-        search_label = QLabel("Enter Address:")
-        search_label.setStyleSheet("font-weight: bold; color: #34495e;")
-        layout.addWidget(search_label)
-        
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("e.g., 1600 Pennsylvania Avenue, Washington, DC")
-        self.search_input.returnPressed.connect(self.search_address)
-        layout.addWidget(self.search_input)
-        
-        # Search button
-        search_btn = QPushButton("Search")
-        search_btn.clicked.connect(self.search_address)
-        layout.addWidget(search_btn)
-        
-        # Results label
-        results_label = QLabel("Search Results:")
-        results_label.setStyleSheet("font-weight: bold; color: #34495e; margin-top: 10px;")
-        layout.addWidget(results_label)
-        
-        # Results list
-        self.results_list = QListWidget()
-        self.results_list.itemClicked.connect(self.on_result_selected)
-        layout.addWidget(self.results_list)
-        
-        # Status label
-        self.status_label = QLabel("Getting your location...")
-        self.status_label.setStyleSheet("color: #7f8c8d; font-style: italic;")
-        layout.addWidget(self.status_label)
-        
-        # Add stretch to push everything to top
-        layout.addStretch()
-        
-        # Current location button
-        current_location_btn = QPushButton("Refresh Current Location")
-        current_location_btn.clicked.connect(self.get_user_location)
-        layout.addWidget(current_location_btn)
-        
-        sidebar.setLayout(layout)
-        return sidebar
-        
-    def get_user_location(self):
-        """Get user's current location using IP geolocation"""
-        self.status_label.setText("Getting your location...")
-        
-        # Start geolocation in separate thread
-        self.geolocation_thread = GeolocationThread()
-        self.geolocation_thread.location_ready.connect(self.handle_location_result)
-        self.geolocation_thread.error_occurred.connect(self.handle_location_error)
-        self.geolocation_thread.start()
-        
-    def handle_location_result(self, lat, lon, location_name):
-        """Handle successful geolocation result"""
-        self.current_lat = lat
-        self.current_lon = lon
-        self.location_name = location_name
-        self.update_map()
-        self.status_label.setText(f"Current location: {location_name}")
-        
-    def handle_location_error(self, error):
-        """Handle geolocation error"""
-        self.status_label.setText(f"Location error: Using default location")
-        # Use default location (NYC) if geolocation fails
-        self.current_lat = 40.7128
-        self.current_lon = -74.0060
-        self.location_name = "New York City, NY (Default)"
-        self.update_map()
-        
-    def search_address(self):
-        """Search for addresses using the input text"""
-        query = self.search_input.text().strip()
-        if not query:
-            QMessageBox.warning(self, "Warning", "Please enter an address to search.")
-            return
-            
-        self.status_label.setText("Searching...")
-        self.results_list.clear()
-        
-        # Start search in separate thread
-        self.search_thread = AddressSearchThread(query)
-        self.search_thread.results_ready.connect(self.handle_search_results)
-        self.search_thread.error_occurred.connect(self.handle_search_error)
-        self.search_thread.start()
-        
-    def handle_search_results(self, results):
-        """Handle search results from the thread"""
-        self.search_results = results
-        self.results_list.clear()
-        
-        if not results:
-            self.status_label.setText("No results found.")
-            return
-            
-        for result in results:
-            item = QListWidgetItem(result['display_name'])
-            item.setData(Qt.UserRole, result)
-            self.results_list.addItem(item)
-            
-        self.status_label.setText(f"Found {len(results)} results.")
-        
-    def handle_search_error(self, error):
-        """Handle search errors"""
-        self.status_label.setText(f"Error: {error}")
-        QMessageBox.critical(self, "Search Error", f"Failed to search: {error}")
-        
-    def on_result_selected(self, item):
-        """Handle selection of a search result"""
-        result = item.data(Qt.UserRole)
-        if result:
-            self.current_lat = result['lat']
-            self.current_lon = result['lon']
-            self.location_name = result['display_name']
-            self.update_map()
-            self.status_label.setText(f"Selected: {result['display_name'][:50]}...")
-            
-    def update_map(self):
-        """Update the map with current location"""
-        try:
-            # Create folium map
-            m = folium.Map(
-                location=[self.current_lat, self.current_lon],
-                zoom_start=15,
-                tiles='OpenStreetMap'
-            )
-            
-            # Add marker for current location
-            folium.Marker(
-                [self.current_lat, self.current_lon],
-                popup=f"{self.location_name}<br>Lat: {self.current_lat:.4f}<br>Lon: {self.current_lon:.4f}",
-                tooltip="Click for details",
-                icon=folium.Icon(color='red', icon='info-sign')
-            ).add_to(m)
-            
-            # Add circle around the location
-            folium.Circle(
-                location=[self.current_lat, self.current_lon],
-                radius=500,
-                popup="500m radius",
-                color='blue',
-                fill=True,
-                opacity=0.3
-            ).add_to(m)
-            
-            # Save map to temporary file
-            if self.temp_file:
-                try:
-                    os.unlink(self.temp_file)
-                except:
-                    pass
-                    
-            self.temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.html').name
-            m.save(self.temp_file)
-            
-            # Load the HTML file into the web engine view
-            file_url = QUrl.fromLocalFile(self.temp_file)
-            self.map_view.load(file_url)
-            
-        except Exception as e:
-            self.status_label.setText(f"Error updating map: {str(e)}")
-            QMessageBox.critical(self, "Map Error", f"Failed to update map: {str(e)}")
+        # Connect page loaded signal
+        self.loadFinished.connect(self.on_load_finished)
     
-    def closeEvent(self, event):
-        """Clean up when closing the application"""
-        if self.temp_file:
-            try:
-                os.unlink(self.temp_file)
-            except:
-                pass
-        event.accept()
+    def create_html_content(self):
+        """Create HTML content with main GUI interface"""
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700&family=JetBrains+Mono:wght@100;200;300;400;500&display=swap');
+                
+                html, body {{
+                    overflow: hidden;
+                    margin: 0;
+                    padding: 0;
+                    position: absolute;
+                    width: 100%;
+                    height: 100vh;
+                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    font-optical-sizing: auto;
+                    --mouse-x: 50%;
+                    --mouse-y: 50%;
+                    background: #000000;
+                }}
 
-def main():
+                /* Remove the old morphGradient keyframes and replace with procedural animation */
+
+                canvas {{
+                    display: none;
+                }}
+                
+                .main-container {{
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    z-index: 10;
+                    transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+                }}
+                
+                /* Search State - Center Glass Bar */
+                .search-container {{
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: min(600px, 85vw);
+                    height: 80px;
+                    z-index: 20;
+                    transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+                }}
+                
+                .glass-search-bar {{
+                    width: 100%;
+                    height: 100%;
+                    backdrop-filter: blur(30px) saturate(150%);
+                    -webkit-backdrop-filter: blur(30px) saturate(150%);
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 40px;
+                    padding: 0 40px;
+                    display: flex;
+                    align-items: center;
+                    box-shadow: 
+                        0 20px 60px rgba(0, 0, 0, 0.8),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.2),
+                        inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+                    position: relative;
+                    overflow: hidden;
+                }}
+                
+                .glass-search-bar::before {{
+                    content: '';
+                    position: absolute;
+                    top: -50%;
+                    left: calc(var(--mouse-x, 50%) - 100px);
+                    width: 200px;
+                    height: 200%;
+                    background: linear-gradient(45deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.15) 40%,
+                        rgba(255, 255, 255, 0.25) 50%,
+                        rgba(255, 255, 255, 0.15) 60%,
+                        transparent 100%);
+                    transform: skew(-20deg);
+                    transition: left 0.3s ease-out;
+                    pointer-events: none;
+                    opacity: 0;
+                    animation: parallaxGlint 4s ease-in-out infinite;
+                }}
+                
+                @keyframes parallaxGlint {{
+                    0%, 100% {{
+                        opacity: 0;
+                        left: calc(var(--mouse-x, 50%) - 200px);
+                    }}
+                    25% {{
+                        opacity: 0.8;
+                        left: calc(var(--mouse-x, 50%) - 50px);
+                    }}
+                    75% {{
+                        opacity: 0.8;
+                        left: calc(var(--mouse-x, 50%) + 50px);
+                    }}
+                }}
+                
+                .glass-search-bar::after {{
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 1px;
+                    background: linear-gradient(90deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.4) 50%,
+                        transparent 100%);
+                }}
+                
+                .search-input {{
+                    flex: 1;
+                    background: transparent;
+                    border: none;
+                    outline: none;
+                    color: rgba(255, 255, 255, 0.9);
+                    font-size: clamp(16px, 3vw, 24px);
+                    font-weight: 300;
+                    font-family: 'Inter', sans-serif;
+                    placeholder-color: rgba(255, 255, 255, 0.4);
+                    transition: font-size 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+                }}
+                
+                .search-input.routing {{
+                    font-size: clamp(14px, 2vw, 18px);
+                }}
+                
+                .search-input::placeholder {{
+                    color: rgba(255, 255, 255, 0.4);
+                    font-weight: 200;
+                }}
+                
+                .search-icon {{
+                    color: rgba(255, 255, 255, 0.5);
+                    font-size: 20px;
+                    margin-right: 20px;
+                    transition: all 0.3s ease;
+                }}
+                
+                /* Dropdown for search suggestions */
+                .suggestions-dropdown {{
+                    position: absolute;
+                    top: 100%;
+                    left: 0;
+                    right: 0;
+                    margin-top: 10px;
+                    backdrop-filter: blur(30px) saturate(150%);
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 20px;
+                    overflow: hidden;
+                    opacity: 0;
+                    transform: translateY(-10px);
+                    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                    pointer-events: none;
+                    box-shadow: 
+                        0 20px 60px rgba(0, 0, 0, 0.8),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                    position: relative;
+                }}
+                
+                .suggestions-dropdown::before {{
+                    content: '';
+                    position: absolute;
+                    top: -50%;
+                    left: calc(var(--mouse-x, 50%) - 80px);
+                    width: 160px;
+                    height: 200%;
+                    background: linear-gradient(45deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.1) 40%,
+                        rgba(255, 255, 255, 0.2) 50%,
+                        rgba(255, 255, 255, 0.1) 60%,
+                        transparent 100%);
+                    transform: skew(-20deg);
+                    transition: left 0.3s ease-out;
+                    pointer-events: none;
+                    opacity: 0;
+                    animation: parallaxGlint 5s ease-in-out infinite;
+                    animation-delay: 1s;
+                }}
+                
+                .suggestions-dropdown.show {{
+                    opacity: 1;
+                    transform: translateY(0);
+                    pointer-events: auto;
+                }}
+                
+                .suggestion-item {{
+                    padding: 16px 30px;
+                    color: rgba(255, 255, 255, 0.8);
+                    font-size: 16px;
+                    font-weight: 300;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                    position: relative;
+                    overflow: hidden;
+                }}
+                
+                .suggestion-item::before {{
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: -100%;
+                    width: 100%;
+                    height: 100%;
+                    background: linear-gradient(90deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.1) 50%,
+                        transparent 100%);
+                    transition: left 0.3s ease;
+                }}
+                
+                .suggestion-item:hover::before {{
+                    left: 100%;
+                }}
+                
+                .suggestion-item:last-child {{
+                    border-bottom: none;
+                }}
+                
+                .suggestion-item:hover {{
+                    background: rgba(255, 255, 255, 0.08);
+                    color: rgba(255, 255, 255, 1);
+                    backdrop-filter: blur(40px);
+                }}
+                /* Route Panel - Left Side */
+                .route-panel {{
+                    position: absolute;
+                    top: 100px;
+                    left: 20px;
+                    width: min(380px, 26vw);
+                    height: calc(100vh - 120px);
+                    backdrop-filter: blur(30px) saturate(150%);
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 20px;
+                    padding: 20px;
+                    box-shadow: 
+                        0 25px 80px rgba(0, 0, 0, 0.9),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15),
+                        inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+                    opacity: 0;
+                    display: none;
+                    pointer-events: none;
+                    box-sizing: border-box;
+                    overflow: hidden;
+                    position: relative;
+                }}
+                
+                .route-panel::before {{
+                    content: '';
+                    position: absolute;
+                    top: -50%;
+                    left: calc(var(--mouse-x, 50%) - 100px);
+                    width: 200px;
+                    height: 200%;
+                    background: linear-gradient(45deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.08) 40%,
+                        rgba(255, 255, 255, 0.15) 50%,
+                        rgba(255, 255, 255, 0.08) 60%,
+                        transparent 100%);
+                    transform: skew(-20deg);
+                    transition: left 0.3s ease-out;
+                    pointer-events: none;
+                    opacity: 0;
+                    animation: parallaxGlint 6s ease-in-out infinite;
+                    animation-delay: 2s;
+                }}
+                
+                .route-panel.show {{
+                    opacity: 1;
+                    display: block;
+                    pointer-events: auto;
+                }}
+                
+                .route-header {{
+                    margin-bottom: 20px;
+                }}
+                
+                .route-title {{
+                    color: rgba(255, 255, 255, 0.9);
+                    font-size: 18px;
+                    font-weight: 300;
+                    margin-bottom: 6px;
+                }}
+                
+                .route-subtitle {{
+                    color: rgba(255, 255, 255, 0.5);
+                    font-size: 12px;
+                    font-family: 'JetBrains Mono', monospace;
+                    letter-spacing: 0.05em;
+                }}
+                
+                .route-options {{
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                    max-height: calc(100vh - 300px);
+                    overflow-y: auto;
+                    scrollbar-width: none;
+                    -ms-overflow-style: none;
+                }}
+                
+                .route-options::-webkit-scrollbar {{
+                    display: none;
+                }}
+                
+                .route-option {{
+                    backdrop-filter: blur(25px);
+                    background: rgba(255, 255, 255, 0.04);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 15px;
+                    padding: 15px;
+                    cursor: pointer;
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    position: relative;
+                    overflow: hidden;
+                    box-shadow: 
+                        0 8px 25px rgba(0, 0, 0, 0.6),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                }}
+                
+                .route-option::before {{
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: -100%;
+                    width: 100%;
+                    height: 100%;
+                    background: linear-gradient(90deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.12) 50%,
+                        transparent 100%);
+                    transition: left 0.4s ease;
+                }}
+                
+                .route-option::after {{
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 1px;
+                    background: linear-gradient(90deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.3) 50%,
+                        transparent 100%);
+                }}
+                
+                .route-option:hover::before {{
+                    left: 100%;
+                }}
+                
+                .route-option:hover {{
+                    background: rgba(255, 255, 255, 0.08);
+                    border-color: rgba(255, 255, 255, 0.2);
+                    transform: translateY(-2px);
+                    box-shadow: 
+                        0 15px 40px rgba(0, 0, 0, 0.8),
+                        inset 0 2px 0 rgba(255, 255, 255, 0.15);
+                }}
+                
+                .route-name {{
+                    color: rgba(255, 255, 255, 0.9);
+                    font-size: 14px;
+                    font-weight: 400;
+                    margin-bottom: 6px;
+                }}
+                
+                .route-details {{
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }}
+                
+                .route-time {{
+                    color: rgba(100, 200, 255, 0.8);
+                    font-size: 12px;
+                    font-weight: 500;
+                }}
+                
+                .route-distance {{
+                    color: rgba(255, 255, 255, 0.6);
+                    font-size: 12px;
+                    font-family: 'JetBrains Mono', monospace;
+                }}
+                
+                /* 3D Map Container - Right Side */
+                .map-container {{
+                    position: absolute;
+                    top: 20px;
+                    left: calc(min(400px, 26vw) + 40px);
+                    width: calc(100vw - min(400px, 26vw) - 60px);
+                    height: calc(100vh - 40px);
+                    backdrop-filter: blur(30px) saturate(150%);
+                    background: rgba(255, 255, 255, 0.03);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 20px;
+                    opacity: 0;
+                    transform: translateX(50px);
+                    transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+                    pointer-events: none;
+                    overflow: hidden;
+                    box-sizing: border-box;
+                    box-shadow: 
+                        0 25px 80px rgba(0, 0, 0, 0.9),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                    position: relative;
+                }}
+                
+                .map-container::before {{
+                    content: '';
+                    position: absolute;
+                    top: -50%;
+                    left: calc(var(--mouse-x, 50%) - 150px);
+                    width: 300px;
+                    height: 200%;
+                    background: linear-gradient(45deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.05) 40%,
+                        rgba(255, 255, 255, 0.1) 50%,
+                        rgba(255, 255, 255, 0.05) 60%,
+                        transparent 100%);
+                    transform: skew(-20deg);
+                    transition: left 0.3s ease-out;
+                    pointer-events: none;
+                    opacity: 0;
+                    animation: parallaxGlint 8s ease-in-out infinite;
+                    animation-delay: 3s;
+                }}
+                
+                .map-container::after {{
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 1px;
+                    background: linear-gradient(90deg, 
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.2) 50%,
+                        transparent 100%);
+                    z-index: 1;
+                }}
+                
+                .map-container.show {{
+                    opacity: 1;
+                    transform: translateX(0);
+                    pointer-events: auto;
+                }}
+                
+                .map-placeholder {{
+                    width: 100%;
+                    height: 100%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-direction: column;
+                    color: rgba(255, 255, 255, 0.4);
+                    font-size: 18px;
+                    font-weight: 300;
+                    z-index: 2;
+                    position: relative;
+                }}
+                
+                /* Welcome message */
+                .welcome-message {{
+                    position: absolute;
+                    top: 35%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    text-align: center;
+                    opacity: 1;
+                    transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+                    z-index: 15;
+                    animation: welcomeFloat 8s ease-in-out infinite;
+                    pointer-events: none;
+                }}
+
+                @keyframes welcomeFloat {{
+                    0%, 100% {{
+                        transform: translate(-50%, -50%) translateY(0px);
+                    }}
+                    50% {{
+                        transform: translate(-50%, -50%) translateY(-10px);
+                    }}
+                }}
+                
+                .welcome-message.hide {{
+                    opacity: 0;
+                    transform: translate(-50%, -60%);
+                    pointer-events: none;
+                }}
+                
+                .welcome-title {{
+                    font-size: clamp(28px, 5vw, 42px);
+                    font-weight: 100;
+                    color: rgba(255, 255, 255, 0.9);
+                    margin-bottom: 12px;
+                    letter-spacing: -0.02em;
+                    text-shadow: 0 0 30px rgba(255, 255, 255, 0.2);
+                }}
+                
+                .welcome-subtitle {{
+                    font-size: clamp(11px, 1.8vw, 14px);
+                    font-weight: 300;
+                    color: rgba(255, 255, 255, 0.6);
+                    font-family: 'JetBrains Mono', monospace;
+                    letter-spacing: 0.05em;
+                    text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+                }}
+            </style>
+        </head>
+        <body>
+            <canvas></canvas>
+            
+            <div class="main-container search-state" id="mainContainer">
+                <!-- Welcome Message -->
+                <div class="welcome-message" id="welcomeMessage">
+                    <div class="welcome-title">Where to?</div>
+                    <div class="welcome-subtitle">Enter your destination to begin</div>
+                </div>
+                
+                <!-- Search Container -->
+                <div class="search-container" id="searchContainer">
+                    <div class="glass-search-bar" id="searchBar">
+                        <div class="search-icon"></div>
+                        <input type="text" class="search-input" id="searchInput" 
+                               placeholder="Where do you want to go?" 
+                               autocomplete="off">
+                    </div>
+                    
+                    <div class="suggestions-dropdown" id="suggestionsDropdown">
+                        <div class="suggestion-item" onclick="selectLocation('Times Square, New York')">Times Square, New York</div>
+                        <div class="suggestion-item" onclick="selectLocation('Central Park, New York')">Central Park, New York</div>
+                        <div class="suggestion-item" onclick="selectLocation('Brooklyn Bridge, New York')">Brooklyn Bridge, New York</div>
+                        <div class="suggestion-item" onclick="selectLocation('Empire State Building, New York')">Empire State Building, New York</div>
+                        <div class="suggestion-item" onclick="selectLocation('Statue of Liberty, New York')">Statue of Liberty, New York</div>
+                    </div>
+                </div>
+                
+                <!-- Route Panel -->
+                <div class="route-panel" id="routePanel">
+                    <div class="route-header">
+                        <div class="route-title">Route Options</div>
+                        <div class="route-subtitle">Choose your preferred route</div>
+                    </div>
+                    
+                    <div class="route-options">
+                        <div class="route-option" onclick="selectRoute('fastest')">
+                            <div class="route-name">Fastest Route</div>
+                            <div class="route-details">
+                                <span class="route-time">24 min</span>
+                                <span class="route-distance">12.3 mi</span>
+                            </div>
+                        </div>
+                        
+                        <div class="route-option" onclick="selectRoute('shortest')">
+                            <div class="route-name">Shortest Route</div>
+                            <div class="route-details">
+                                <span class="route-time">28 min</span>
+                                <span class="route-distance">10.8 mi</span>
+                            </div>
+                        </div>
+                        
+                        <div class="route-option" onclick="selectRoute('scenic')">
+                            <div class="route-name">Scenic Route</div>
+                            <div class="route-details">
+                                <span class="route-time">35 min</span>
+                                <span class="route-distance">15.2 mi</span>
+                            </div>
+                        </div>
+                        
+                        <div class="route-option" onclick="selectRoute('eco')">
+                            <div class="route-name">Eco-Friendly</div>
+                            <div class="route-details">
+                                <span class="route-time">32 min</span>
+                                <span class="route-distance">13.7 mi</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Map Container -->
+                <div class="map-container" id="mapContainer">
+                    <div class="map-placeholder">
+                        <div style="font-size: 24px; margin-bottom: 16px; width: 40px; height: 40px; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">MAP</div>
+                        <div>3D Interactive Map</div>
+                        <div style="font-size: 14px; margin-top: 8px; opacity: 0.6;">Real-time road visualization</div>
+                    </div>
+                </div>
+            </div>
+            
+            <script>
+                // Mouse tracking for parallax glints
+                document.body.addEventListener("pointermove", (e) => {{
+                    const {{ clientX: x, clientY: y }} = e;
+                    const {{ innerWidth: w, innerHeight: h }} = window;
+                    const mouseX = (x / w) * 100;
+                    const mouseY = (y / h) * 100;
+                    document.documentElement.style.setProperty('--mouse-x', mouseX + '%');
+                    document.documentElement.style.setProperty('--mouse-y', mouseY + '%');
+                }});
+                
+                let currentState = 'search';
+                let isTransitioning = false;
+                
+                // Search input functionality
+                const searchInput = document.getElementById('searchInput');
+                const suggestionsDropdown = document.getElementById('suggestionsDropdown');
+                
+                searchInput.addEventListener('input', function() {{
+                    const value = this.value.trim();
+                    if (value.length > 0) {{
+                        suggestionsDropdown.classList.add('show');
+                    }} else {{
+                        suggestionsDropdown.classList.remove('show');
+                    }}
+                }});
+                
+                searchInput.addEventListener('focus', function() {{
+                    if (this.value.trim().length > 0) {{
+                        suggestionsDropdown.classList.add('show');
+                    }}
+                }});
+                
+                document.addEventListener('click', function(e) {{
+                    if (!e.target.closest('.search-container')) {{
+                        suggestionsDropdown.classList.remove('show');
+                    }}
+                }});
+                
+                // Location selection
+                function selectLocation(location) {{
+                    if (isTransitioning) return;
+                    isTransitioning = true;
+                    
+                    searchInput.value = location;
+                    suggestionsDropdown.classList.remove('show');
+                    
+                    // Hide welcome message
+                    document.getElementById('welcomeMessage').classList.add('hide');
+                    
+                    // Start the transformation animation
+                    setTimeout(() => {{
+                        transformToSidePanel();
+                    }}, 300);
+                }}
+                
+                // Transform search bar into side panel
+                function transformToSidePanel() {{
+                    const searchContainer = document.getElementById('searchContainer');
+                    const searchBar = document.getElementById('searchBar');
+                    const searchInput = document.getElementById('searchInput');
+                    const routePanel = document.getElementById('routePanel');
+                    
+                    // First, animate the search bar to the top-left position
+                    searchContainer.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+                    searchContainer.style.top = '20px';
+                    searchContainer.style.left = '20px';
+                    searchContainer.style.transform = 'translate(0, 0)';
+                            searchContainer.style.width = 'min(380px, 26vw)';
+                            searchContainer.style.height = '60px';                    // Morph the search bar styling
+                    searchBar.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+                    searchBar.style.borderRadius = '20px';
+                    searchBar.style.padding = '0 20px';
+                    searchBar.style.height = '60px';
+                    
+                    // Adjust input font size
+                    searchInput.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+                    searchInput.style.fontSize = 'clamp(14px, 2vw, 18px)';
+                    
+                    // After the search bar reaches position, start expanding into route panel
+                    setTimeout(() => {{
+                        // Show the route panel with expansion animation
+                        routePanel.style.opacity = '0';
+                        routePanel.style.display = 'block';
+                        routePanel.style.transform = 'translateX(0) scaleY(0)';
+                        routePanel.style.transformOrigin = 'top';
+                        routePanel.style.transition = 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+                        
+                        // Trigger the expansion
+                        setTimeout(() => {{
+                            routePanel.style.opacity = '1';
+                            routePanel.style.transform = 'translateX(0) scaleY(1)';
+                            routePanel.classList.add('show');
+                        }}, 50);
+                        
+                        // Show map container after route panel
+                        setTimeout(() => {{
+                            const mapContainer = document.getElementById('mapContainer');
+                            mapContainer.style.transition = 'all 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+                            mapContainer.classList.add('show');
+                            
+                            currentState = 'routing';
+                            isTransitioning = false;
+                        }}, 400);
+                        
+                    }}, 800);
+                }}
+                
+                // Route selection
+                function selectRoute(routeType) {{
+                    console.log('Selected route:', routeType);
+                    // Here you would typically start navigation
+                    
+                    // Add visual feedback
+                    event.target.style.background = 'linear-gradient(135deg, rgba(100, 200, 255, 0.15) 0%, rgba(100, 200, 255, 0.05) 100%)';
+                    event.target.style.borderColor = 'rgba(100, 200, 255, 0.3)';
+                    
+                    setTimeout(() => {{
+                        event.target.style.background = '';
+                        event.target.style.borderColor = '';
+                    }}, 1000);
+                }}
+                
+                // Initialize
+                document.addEventListener('DOMContentLoaded', function() {{
+                    // Focus search input after a delay
+                    setTimeout(() => {{
+                        searchInput.focus();
+                    }}, 1000);
+                }});
+                
+                // Handle escape key to go back
+                document.addEventListener('keydown', function(e) {{
+                    if (e.key === 'Escape' && currentState === 'routing') {{
+                        // Transition back to search
+                        resetToSearch();
+                    }}
+                }});
+                
+                function resetToSearch() {{
+                    if (isTransitioning) return;
+                    isTransitioning = true;
+                    
+                    currentState = 'search';
+                    
+                    // Hide map and route panel first
+                    document.getElementById('mapContainer').classList.remove('show');
+                    
+                    setTimeout(() => {{
+                        // Collapse route panel
+                        const routePanel = document.getElementById('routePanel');
+                        routePanel.style.transform = 'translateX(0) scaleY(0)';
+                        routePanel.style.opacity = '0';
+                        
+                        setTimeout(() => {{
+                            routePanel.classList.remove('show');
+                            routePanel.style.display = 'none';
+                            
+                            // Transform search bar back to center
+                            const searchContainer = document.getElementById('searchContainer');
+                            const searchBar = document.getElementById('searchBar');
+                            const searchInput = document.getElementById('searchInput');
+                            
+                            searchContainer.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+                            searchContainer.style.top = '50%';
+                            searchContainer.style.left = '50%';
+                            searchContainer.style.transform = 'translate(-50%, -50%)';
+                            searchContainer.style.width = 'min(600px, 85vw)';
+                            searchContainer.style.height = '80px';
+                            
+                            searchBar.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+                            searchBar.style.borderRadius = '40px';
+                            searchBar.style.padding = '0 40px';
+                            searchBar.style.height = '100%';
+                            
+                            searchInput.style.transition = 'all 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+                            searchInput.style.fontSize = 'clamp(16px, 3vw, 24px)';
+                            
+                            // Show welcome message and clear input after transformation
+                            setTimeout(() => {{
+                                document.getElementById('welcomeMessage').classList.remove('hide');
+                                searchInput.value = '';
+                                searchInput.focus();
+                                isTransitioning = false;
+                            }}, 1200);
+                            
+                        }}, 300);
+                    }}, 200);
+                }}
+                
+                // Handle window resize
+                window.addEventListener('resize', function() {{
+                    if (typeof resizeCanvas === 'function') {{
+                        resizeCanvas();
+                    }}
+                }});
+            </script>
+        </body>
+        </html>
+        """
+        
+        return html_content
+    
+    def on_load_finished(self, ok):
+        """Called when the page finishes loading"""
+        if ok:
+            print("Main GUI loaded successfully")
+        else:
+            print("Failed to load Main GUI")
+
+
+class MainGUIWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("background-color: black;")
+        self.init_ui()
+    
+    def init_ui(self):
+        """Initialize the UI"""
+        # Set window properties
+        self.setWindowTitle("Driver - Main Interface")
+        self.setGeometry(100, 100, 1400, 900)
+        
+        # Create layout
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Create the main web view
+        self.web_view = MainGUIView()
+        layout.addWidget(self.web_view)
+        
+        self.setLayout(layout)
+        
+        # Connect signals
+        self.web_view.locationSelected.connect(self.handle_location_selected)
+    
+    def handle_location_selected(self, location):
+        """Handle when a location is selected"""
+        print(f"Location selected: {location}")
+        # Here you would typically trigger routing calculations
+    
+    def show_routing_interface(self):
+        """Show the routing interface"""
+        # This would be called from the startup GUI
+        self.show()
+
+
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     
     # Set application properties
-    app.setApplicationName("Location Search GUI")
+    app.setApplicationName("Driver Main GUI")
     app.setApplicationVersion("1.0")
     
-    # Create and show main window
-    window = LocationGUI()
-    window.show()
+    # Create and show the main window
+    main_window = MainGUIWidget()
+    main_window.show()
     
-    sys.exit(app.exec_())
-
-if __name__ == "__main__":
-    main()
+    sys.exit(app.exec())

@@ -15,6 +15,8 @@ from dijkstra_pathfinding import DijkstraPathfinder
 
 pygame.init()
 
+population_size = 30
+
 WIDTH, HEIGHT = 1280, 720
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("AI Cars Learning on Real Roads")
@@ -716,7 +718,7 @@ def create_car_from_data(car_data, road_system, pathfinder):
     return car
 
 
-def evolve_population(cars, population_size=30, road_system=None, pathfinder=None, shared_destination=None, generation=1):
+def evolve_population(cars, population_size=population_size, road_system=None, pathfinder=None, shared_destination=None, generation=1):
     # Calculate fitness for all cars
     for car in cars:
         car.calculate_fitness()
@@ -1240,7 +1242,6 @@ camera = Camera(0, 0, WIDTH, HEIGHT)
 road_bounds = road_system.get_road_bounds()
 camera.set_bounds(*road_bounds)
 
-population_size = 30
 cars = []
 
 # Create initial population with shared destination pathfinding
