@@ -30,7 +30,7 @@ YELLOW = (255, 255, 0)
 GRAY = (128, 128, 128)
 
 clock = pygame.time.Clock()
-FPS = 120 
+FPS = 40 
 
 # Global variables for tracking statistics
 fitness_history = deque(maxlen=100)  # Keep last 100 generations
@@ -1326,44 +1326,46 @@ while running:
             save_population(cars, generation)
             running = False
         elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r:
-                print("Resetting to new location...")
-                # Load new random location
-                road_system = OSMRoadSystem(
-                    center_lat=random.uniform(-40, 50), 
-                    center_lon=random.uniform(-120, 120), 
-                    radius=1000
-                )
-                # Rebuild pathfinder for new location
-                pathfinder = DijkstraPathfinder(road_system)
-                road_bounds = road_system.get_road_bounds()
-                camera.set_bounds(*road_bounds)
-                
-                # Reset all cars to new random positions with individual paths to shared destination
-                # Generate new valid shared destination for new location
-                new_shared_destination = None
-                if pathfinder:
-                    for attempt in range(10):
-                        destination_node, test_destination = pathfinder.get_random_destination()
-                        if destination_node and test_destination:
-                            test_spawn_x, test_spawn_y, _ = road_system.get_random_spawn_point()
-                            test_path = pathfinder.find_path(test_spawn_x, test_spawn_y, test_destination[0], test_destination[1])
-                            if test_path:
-                                new_shared_destination = test_destination
-                                print(f"New location shared destination set at: {new_shared_destination}")
-                                break
-                
-                shared_destination = new_shared_destination
-                
-                for car in cars:
-                    if not car.crashed:
-                        spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point()
-                        car.x, car.y, car.angle = spawn_x, spawn_y, spawn_angle
-                        car.road_system = road_system
-                        car.pathfinder = pathfinder
-                        car.shared_destination = shared_destination
-                        if shared_destination:
-                            car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
+            # R key functionality disabled
+            # if event.key == pygame.K_r:
+            #     print("Resetting to new location...")
+            #     # Load new random location
+            #     road_system = OSMRoadSystem(
+            #         center_lat=random.uniform(-40, 50), 
+            #         center_lon=random.uniform(-120, 120), 
+            #         radius=1000
+            #     )
+            #     # Rebuild pathfinder for new location
+            #     pathfinder = DijkstraPathfinder(road_system)
+            #     road_bounds = road_system.get_road_bounds()
+            #     camera.set_bounds(*road_bounds)
+            #     
+            #     # Reset all cars to new random positions with individual paths to shared destination
+            #     # Generate new valid shared destination for new location
+            #     new_shared_destination = None
+            #     if pathfinder:
+            #         for attempt in range(10):
+            #             destination_node, test_destination = pathfinder.get_random_destination()
+            #             if destination_node and test_destination:
+            #                 test_spawn_x, test_spawn_y, _ = road_system.get_random_spawn_point()
+            #                 test_path = pathfinder.find_path(test_spawn_x, test_spawn_y, test_destination[0], test_destination[1])
+            #                 if test_path:
+            #                     new_shared_destination = test_destination
+            #                     print(f"New location shared destination set at: {new_shared_destination}")
+            #                     break
+            #     
+            #     shared_destination = new_shared_destination
+            #     
+            #     for car in cars:
+            #         if not car.crashed:
+            #             spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point()
+            #             car.x, car.y, car.angle = spawn_x, spawn_y, spawn_angle
+            #             car.road_system = road_system
+            #             car.pathfinder = pathfinder
+            #             car.shared_destination = shared_destination
+            #             if shared_destination:
+            #                 car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
+            pass  # R key does nothing now
     
     keys = pygame.key.get_pressed()
     
