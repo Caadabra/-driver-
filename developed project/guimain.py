@@ -811,10 +811,17 @@ class MainGUIView(QWebEngineView):
                     updateBackgroundMap(userLocation.lat, userLocation.lng);
                 }}
                 
-                // Mouse tracking for parallax glints with performance optimization
+                // Mouse tracking for parallax glints with 60 FPS cap
                 let mouseTimeout;
+                let lastFrameTime = 0;
+                const targetFPS = 60;
+                const frameDelay = 1000 / targetFPS; // ~16.67ms
+                
                 document.body.addEventListener("pointermove", (e) => {{
                     if (mouseTimeout) return;
+                    
+                    const currentTime = Date.now();
+                    if (currentTime - lastFrameTime < frameDelay) return;
                     
                     mouseTimeout = requestAnimationFrame(() => {{
                         try {{
@@ -830,6 +837,7 @@ class MainGUIView(QWebEngineView):
                         }} catch (error) {{
                             // Silently ignore errors
                         }}
+                        lastFrameTime = currentTime;
                         mouseTimeout = null;
                     }});
                 }});
@@ -1076,6 +1084,12 @@ class MainGUIWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.setStyleSheet("background-color: black;")
+        
+        # Set up 60 FPS cap
+        self.fps_timer = QTimer()
+        self.fps_timer.timeout.connect(self.update_frame)
+        self.fps_timer.start(16)  # 16ms = ~60 FPS (1000ms / 60 = 16.67ms)
+        
         self.init_ui()
     
     def init_ui(self):
@@ -1098,6 +1112,12 @@ class MainGUIWidget(QWidget):
         # Connect signals
         self.web_view.locationSelected.connect(self.handle_location_selected)
     
+    def update_frame(self):
+        """Update frame at 60 FPS"""
+        # This method is called 60 times per second
+        # You can add any frame-based updates here
+        self.update()
+    
     def handle_location_selected(self, location):
         """Handle when a location is selected"""
         print(f"Location selected: {location}")
@@ -1107,6 +1127,12 @@ class MainGUIWidget(QWidget):
         """Show the routing interface"""
         # This would be called from the startup GUI
         self.show()
+    
+    def closeEvent(self, event):
+        """Clean up resources when closing"""
+        if hasattr(self, 'fps_timer'):
+            self.fps_timer.stop()
+        event.accept()
 
 
 if __name__ == "__main__":
