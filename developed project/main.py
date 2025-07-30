@@ -30,7 +30,8 @@ YELLOW = (255, 255, 0)
 GRAY = (128, 128, 128)
 
 clock = pygame.time.Clock()
-FPS = 40 
+FPS = 60  # Display FPS
+SIMULATION_SPEED = 5  # Simulation runs 5x faster than display
 
 # Global variables for tracking statistics
 fitness_history = deque(maxlen=100)  # Keep last 100 generations
@@ -1312,71 +1313,131 @@ for car in cars:
         car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
 
 evolution_timer = 0
-evolution_interval = 20 * FPS  # 20 seconds per generation
+evolution_interval = 20 * FPS  # 20 seconds per generation (in display time)
+simulation_steps = 0  # Track total simulation steps
 
 print("Starting AI cars with Dijkstra pathfinding evolution...")
+print(f"Simulation running at {SIMULATION_SPEED}x speed")
+print("Controls:")
+print("  + - Increase simulation speed")
+print("  - - Decrease simulation speed")
+print("  SPACE - Toggle pause")
+
+paused = False
 
 running = True
 while running:
-    screen.fill((34, 139, 34))  # Dark green background
-
+    
+    # Handle events
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             print("Saving population before exit...")
             save_population(cars, generation)
             running = False
         elif event.type == pygame.KEYDOWN:
-            # R key functionality disabled
-            # if event.key == pygame.K_r:
-            #     print("Resetting to new location...")
-            #     # Load new random location
-            #     road_system = OSMRoadSystem(
-            #         center_lat=random.uniform(-40, 50), 
-            #         center_lon=random.uniform(-120, 120), 
-            #         radius=1000
-            #     )
-            #     # Rebuild pathfinder for new location
-            #     pathfinder = DijkstraPathfinder(road_system)
-            #     road_bounds = road_system.get_road_bounds()
-            #     camera.set_bounds(*road_bounds)
-            #     
-            #     # Reset all cars to new random positions with individual paths to shared destination
-            #     # Generate new valid shared destination for new location
-            #     new_shared_destination = None
-            #     if pathfinder:
-            #         for attempt in range(10):
-            #             destination_node, test_destination = pathfinder.get_random_destination()
-            #             if destination_node and test_destination:
-            #                 test_spawn_x, test_spawn_y, _ = road_system.get_random_spawn_point()
-            #                 test_path = pathfinder.find_path(test_spawn_x, test_spawn_y, test_destination[0], test_destination[1])
-            #                 if test_path:
-            #                     new_shared_destination = test_destination
-            #                     print(f"New location shared destination set at: {new_shared_destination}")
-            #                     break
-            #     
-            #     shared_destination = new_shared_destination
-            #     
-            #     for car in cars:
-            #         if not car.crashed:
-            #             spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point()
-            #             car.x, car.y, car.angle = spawn_x, spawn_y, spawn_angle
-            #             car.road_system = road_system
-            #             car.pathfinder = pathfinder
-            #             car.shared_destination = shared_destination
-            #             if shared_destination:
-            #                 car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
-            pass  # R key does nothing now
+            if event.key == pygame.K_r:
+                print("Resetting to new location...")
+                # Load new random location
+                road_system = OSMRoadSystem(
+                    center_lat=random.uniform(-40, 50), 
+                    center_lon=random.uniform(-120, 120), 
+                    radius=1000
+                )
+                # Rebuild pathfinder for new location
+                pathfinder = DijkstraPathfinder(road_system)
+                road_bounds = road_system.get_road_bounds()
+                camera.set_bounds(*road_bounds)
+                
+                # Reset all cars to new random positions with individual paths to shared destination
+                # Generate new valid shared destination for new location
+                new_shared_destination = None
+                if pathfinder:
+                    for attempt in range(10):
+                        destination_node, test_destination = pathfinder.get_random_destination()
+                        if destination_node and test_destination:
+                            test_spawn_x, test_spawn_y, _ = road_system.get_random_spawn_point()
+                            test_path = pathfinder.find_path(test_spawn_x, test_spawn_y, test_destination[0], test_destination[1])
+                            if test_path:
+                                new_shared_destination = test_destination
+                                print(f"New location shared destination set at: {new_shared_destination}")
+                                break
+                
+                shared_destination = new_shared_destination
+                
+                for car in cars:
+                    if not car.crashed:
+                        spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point()
+                        car.x, car.y, car.angle = spawn_x, spawn_y, spawn_angle
+                        car.road_system = road_system
+                        car.pathfinder = pathfinder
+                        car.shared_destination = shared_destination
+                        if shared_destination:
+                            car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
+            elif event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS:  # + key
+                SIMULATION_SPEED = min(20, SIMULATION_SPEED + 1)
+                print(f"Simulation speed: {SIMULATION_SPEED}x")
+            elif event.key == pygame.K_MINUS:  # - key
+                SIMULATION_SPEED = max(1, SIMULATION_SPEED - 1)
+                print(f"Simulation speed: {SIMULATION_SPEED}x")
+            elif event.key == pygame.K_SPACE:
+                paused = not paused
+                print(f"Simulation {'paused' if paused else 'resumed'}")
     
     keys = pygame.key.get_pressed()
     
-    # Find best car and count alive cars (including saved cars)
+    # Run simulation steps (multiple per frame for speed)
+    if not paused:
+        for sim_step in range(SIMULATION_SPEED):
+            simulation_steps += 1
+            
+            # Find best car and count alive cars (including saved cars)
+            alive_cars = 0
+            saved_cars = 0
+            best_car = None
+            for car in cars:
+                if not car.crashed or car.saved_state:
+                    if simulation_steps % 30 == 0:  # Update fitness occasionally
+                        car.calculate_fitness()
+                    if best_car is None or car.fitness > best_car.fitness:
+                        best_car = car
+                    alive_cars += 1
+                    if car.saved_state:
+                        saved_cars += 1
+            
+            # Update cars (simulation step)
+            for car in cars:
+                if not car.crashed or car.saved_state:  # Process saved cars too for display
+                    if not car.saved_state:  # Only move cars that aren't saved
+                        car.update_raycasts()
+                        car.move(keys)
+                        
+                        # Check if car reached destination
+                        if (car.target_x is None and car.target_y is None and 
+                            len(car.path_waypoints) > 0 and 
+                            car.current_waypoint_index >= len(car.path_waypoints) and
+                            not car.destination_reached):
+                            car.destination_reached = True
+                            car.saved_state = True
+                            print(f"Car reached destination! Total time: {car.time_alive} frames")
+            
+            # Evolution logic
+            evolution_timer += 1
+            if evolution_timer >= evolution_interval or alive_cars == 0:
+                cars, shared_destination = evolve_population(cars, population_size, road_system, pathfinder, shared_destination, generation)
+                evolution_timer = 0
+                generation += 1
+                print(f"Generation {generation} started")
+                break  # Exit simulation loop to render
+    
+    # Rendering (once per display frame)
+    screen.fill((34, 139, 34))  # Dark green background
+    
+    # Find best car for display (recalculate for rendering)
+    best_car = None
     alive_cars = 0
     saved_cars = 0
-    best_car = None
     for car in cars:
         if not car.crashed or car.saved_state:
-            if evolution_timer % 30 == 0:  # Update fitness occasionally
-                car.calculate_fitness()
             if best_car is None or car.fitness > best_car.fitness:
                 best_car = car
             alive_cars += 1
@@ -1391,28 +1452,19 @@ while running:
     # Draw roads
     road_system.draw_roads(screen, camera.x, camera.y, WIDTH, HEIGHT, camera.zoom)
     
-    # Update and draw cars
+    # Draw cars (rendering only)
     for car in cars:
         if not car.crashed or car.saved_state:  # Draw saved cars too
-            if not car.saved_state:  # Only move cars that aren't saved
-                car.move(keys)
             is_best = (car == best_car)
-            if (is_best or evolution_timer % 3 == 0) and not car.saved_state:
-                car.update_raycasts()
-            
             car.draw(camera, is_best)
     
-    # Evolution logic
-    evolution_timer += 1
-    if evolution_timer >= evolution_interval or alive_cars == 0:
-        cars, shared_destination = evolve_population(cars, population_size, road_system, pathfinder, shared_destination, generation)
-        evolution_timer = 0
-        generation += 1
-        print(f"Generation {generation} started")
-    
-    # Display info with saved cars count
+    # Display info with simulation speed and saved cars count
     font = pygame.font.Font(None, 36)
-    info_text = f"Gen: {generation} | Alive: {alive_cars} | Saved: {saved_cars} | Time: {evolution_timer // FPS}s"
+    info_text = f"Gen: {generation} | Alive: {alive_cars} | Saved: {saved_cars} | Speed: {SIMULATION_SPEED}x"
+    if paused:
+        info_text += " | PAUSED"
+    else:
+        info_text += f" | Time: {evolution_timer // FPS}s"
     if best_car:
         info_text += f" | Best: {best_car.fitness:.1f}"
         if best_car.saved_state:
@@ -1425,7 +1477,7 @@ while running:
     pygame.draw.rect(screen, (0, 0, 0, 128), text_rect.inflate(10, 5))
     screen.blit(text_surface, text_rect)
     
-    # Display pathfinding info with performance stats
+    # Display pathfinding info with performance stats and controls
     pathfinding_info = f"Shared Destination: All cars find individual paths to the same goal!"
     pathfinding_surface = font.render(pathfinding_info, True, WHITE)
     pathfinding_rect = pathfinding_surface.get_rect()
@@ -1433,6 +1485,16 @@ while running:
     
     pygame.draw.rect(screen, (0, 0, 0, 128), pathfinding_rect.inflate(10, 5))
     screen.blit(pathfinding_surface, pathfinding_rect)
+    
+    # Display controls
+    controls_font = pygame.font.Font(None, 24)
+    controls_text = "Controls: +/- Speed | SPACE Pause | R Reset"
+    controls_surface = controls_font.render(controls_text, True, WHITE)
+    controls_rect = controls_surface.get_rect()
+    controls_rect.topleft = (10, pathfinding_rect.bottom + 5)
+    
+    pygame.draw.rect(screen, (0, 0, 0, 128), controls_rect.inflate(10, 5))
+    screen.blit(controls_surface, controls_rect)
     
     # Draw AI control visualization for best car
     if best_car:
