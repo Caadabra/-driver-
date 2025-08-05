@@ -13,6 +13,7 @@ from osm_roads import OSMRoadSystem
 from camera import Camera
 from dijkstra_pathfinding import DijkstraPathfinder
 
+
 pygame.init()
 
 population_size = 30
@@ -30,21 +31,20 @@ YELLOW = (255, 255, 0)
 GRAY = (128, 128, 128)
 
 clock = pygame.time.Clock()
-FPS = 60  # Display FPS
-SIMULATION_SPEED = 5  # Simulation runs 5x faster than display
+FPS = 60
 
 # Global variables for tracking statistics
 fitness_history = deque(maxlen=100)  # Keep last 100 generations
 generation_history = deque(maxlen=100)
 saved_cars_history = deque(maxlen=100)
 
-# Raycast configuration - Simple setup
-NUM_RAYCASTS = 5
-RAYCAST_SPREAD = 90  # 90 degree spread for front sensors
+# Raycast configuration - Enhanced setup with more sensors
+NUM_RAYCASTS = 8
+RAYCAST_SPREAD = 180  # 180 degree spread for comprehensive sensing
 
-def set_raycast_config(num_rays, spread_degrees=90):
+def set_raycast_config(num_rays, spread_degrees=180):
     """
-    Simple raycast configuration.
+    Enhanced raycast configuration with more sensors.
     """
     global NUM_RAYCASTS, RAYCAST_SPREAD
     NUM_RAYCASTS = num_rays
@@ -52,7 +52,7 @@ def set_raycast_config(num_rays, spread_degrees=90):
     print(f"Raycast config: {NUM_RAYCASTS} rays with {RAYCAST_SPREAD}° spread")
 
 class SimpleCarAI(nn.Module):
-    def __init__(self, input_size=7, hidden_size=64, output_size=3):
+    def __init__(self, input_size=17, hidden_size=64, output_size=3):
         super(SimpleCarAI, self).__init__()
         
         self.network = nn.Sequential(
@@ -83,10 +83,10 @@ class Car:
         self.width = 12/1.4
         self.height = 20/1.4
         
-        # Simple raycast setup - 5 sensors
+        # Enhanced raycast setup - 8 sensors for better awareness
         self.raycast_length = 100
-        self.raycast_angles = [-45, -22.5, 0, 22.5, 45]  # Left, front-left, front, front-right, right
-        self.raycast_distances = [self.raycast_length] * 5
+        self.raycast_angles = [-90, -67.5, -45, -22.5, 0, 22.5, 45, 67.5]  # Full 180-degree coverage
+        self.raycast_distances = [self.raycast_length] * 8
         
         self.use_ai = use_ai
         self.fitness = 0
@@ -99,20 +99,25 @@ class Car:
         self.off_road_time = 0
         self.max_off_road_time = 180  # 3 seconds at 60 FPS
         
-        # Simple stationary detection
+        # Enhanced stationary detection with penalties
         self.stationary_timer = 0
-        self.stationary_threshold = 300  # 5 seconds
+        self.stationary_threshold = 200  # Reduced to 3.33 seconds (more strict)
         self.last_position = (x, y)
         self.position_check_timer = 0
+        self.total_stationary_time = 0  # Track cumulative stationary time
+        self.movement_required_speed = 0.3  # Minimum speed to be considered moving
         
-        # Time-to-checkpoint tracking for enhanced reward system
+        # Enhanced checkpoint tracking with streak rewards
         self.checkpoint_times = []  # Track time taken to reach each checkpoint
         self.last_checkpoint_time = 0  # When the last checkpoint was reached
         self.current_checkpoint_start_time = 0  # When we started moving toward current checkpoint
+        self.checkpoint_streak = 0  # Current streak of successful checkpoints
+        self.max_checkpoint_streak = 0  # Best streak achieved
+        self.consecutive_fast_checkpoints = 0  # Streak of fast checkpoint completions
         
         if self.use_ai:
-            # Enhanced AI with pathfinding: 5 raycasts + speed + angle + target_direction + target_distance
-            self.ai = SimpleCarAI(input_size=9, hidden_size=64, output_size=3)
+            # Enhanced AI with more raycasts: 8 raycasts + speed + angle + target_direction + target_distance
+            self.ai = SimpleCarAI(input_size=17, hidden_size=64, output_size=3)
             self.randomize_weights()
             
         # AI control visualization
@@ -133,6 +138,12 @@ class Car:
         self.destination_reached = False  # Track if destination was reached
         self.saved_state = False  # Track if car is in saved state
         self.shared_destination = None  # All cars share the same destination
+        
+        # Predictive path system for 3-second lookahead
+        self.prediction_horizon = 180  # 3 seconds at 60 FPS
+        self.predicted_path = []  # List of (x, y) positions for next 3 seconds
+        self.path_following_accuracy = 0.0  # How well following predicted path
+        self.path_deviation_history = deque(maxlen=60)  # Track recent deviations
         
         # Don't generate path immediately - wait for shared destination to be set
     
@@ -235,21 +246,42 @@ class Car:
             self.checkpoint_times.append(time_to_checkpoint)
             self.last_checkpoint_time = self.time_alive
             
+            # Update checkpoint streaks
+            self.checkpoint_streak += 1
+            self.max_checkpoint_streak = max(self.max_checkpoint_streak, self.checkpoint_streak)
+            
+            # Check if this was a fast checkpoint completion
+            ideal_time = 180  # 3 seconds at 60 FPS
+            if time_to_checkpoint <= ideal_time * 1.2:  # Within 20% of ideal time
+                self.consecutive_fast_checkpoints += 1
+            else:
+                self.consecutive_fast_checkpoints = 0  # Reset fast streak
+            
             # Advance to next waypoint
             self.current_waypoint_index += 1
             self.update_current_target()
             
-            # Bonus fitness for reaching waypoints quickly
+            # Enhanced bonus fitness for reaching waypoints
             if self.use_ai:
                 base_waypoint_bonus = 50
+                
                 # Time efficiency bonus - reward faster checkpoint completion
                 if time_to_checkpoint > 0:
-                    # Ideal time per checkpoint (adjust based on your game)
-                    ideal_time = 180  # 3 seconds at 60 FPS
                     time_efficiency = max(0.1, ideal_time / time_to_checkpoint)  # Better if faster
                     time_bonus = min(base_waypoint_bonus * time_efficiency, 200)  # Cap at 200
-                    self.fitness += time_bonus
-                    print(f"Checkpoint reached in {time_to_checkpoint} frames, bonus: {time_bonus:.1f}")
+                    
+                    # Streak multiplier bonus - reward consecutive checkpoints
+                    streak_multiplier = 1.0 + (self.checkpoint_streak * 0.1)  # 10% bonus per checkpoint in streak
+                    streak_multiplier = min(streak_multiplier, 3.0)  # Cap at 3x multiplier
+                    
+                    # Fast checkpoint streak bonus
+                    fast_streak_bonus = self.consecutive_fast_checkpoints * 25  # 25 points per fast checkpoint in streak
+                    
+                    total_bonus = (time_bonus * streak_multiplier) + fast_streak_bonus
+                    self.fitness += total_bonus
+                    
+                    print(f"Checkpoint {self.checkpoint_streak} reached in {time_to_checkpoint} frames, "
+                          f"bonus: {total_bonus:.1f} (streak: {streak_multiplier:.1f}x, fast streak: {self.consecutive_fast_checkpoints})")
                 else:
                     self.fitness += base_waypoint_bonus
     
@@ -280,6 +312,88 @@ class Car:
             return 0
         
         return math.sqrt((self.x - self.target_x)**2 + (self.y - self.target_y)**2)
+    
+    def calculate_predictive_path(self):
+        """Calculate where the car should be in the next 3 seconds based on optimal path following"""
+        if not self.path_waypoints or self.current_waypoint_index >= len(self.path_waypoints):
+            self.predicted_path = []
+            return
+        
+        predicted_positions = []
+        current_x, current_y = self.x, self.y
+        current_speed = max(1.5, abs(self.speed))  # Assume minimum reasonable speed
+        waypoint_idx = self.current_waypoint_index
+        
+        # Simulate movement for prediction_horizon frames
+        for frame in range(0, self.prediction_horizon, 6):  # Sample every 6 frames for performance
+            if waypoint_idx >= len(self.path_waypoints):
+                break
+                
+            target_x, target_y = self.path_waypoints[waypoint_idx]
+            
+            # Calculate direction to current target
+            dx = target_x - current_x
+            dy = target_y - current_y
+            distance_to_target = math.sqrt(dx**2 + dy**2)
+            
+            if distance_to_target < 30:  # Close to waypoint, advance to next
+                waypoint_idx += 1
+                if waypoint_idx >= len(self.path_waypoints):
+                    break
+                target_x, target_y = self.path_waypoints[waypoint_idx]
+                dx = target_x - current_x
+                dy = target_y - current_y
+                distance_to_target = math.sqrt(dx**2 + dy**2)
+            
+            # Normalize direction
+            if distance_to_target > 0:
+                dx /= distance_to_target
+                dy /= distance_to_target
+            
+            # Calculate optimal speed based on upcoming path curvature
+            optimal_speed = current_speed
+            if waypoint_idx + 1 < len(self.path_waypoints):
+                next_target_x, next_target_y = self.path_waypoints[waypoint_idx + 1]
+                
+                # Calculate turn angle
+                angle1 = math.atan2(target_x - current_x, -(target_y - current_y))
+                angle2 = math.atan2(next_target_x - target_x, -(next_target_y - target_y))
+                turn_angle = abs(angle2 - angle1)
+                if turn_angle > math.pi:
+                    turn_angle = 2 * math.pi - turn_angle
+                
+                # Adjust speed for turns (slower for sharper turns)
+                if turn_angle > 0.3:  # Significant turn
+                    turn_factor = max(0.4, 1.0 - (turn_angle / math.pi))
+                    optimal_speed = current_speed * turn_factor
+            
+            # Move towards target with optimal speed
+            move_distance = optimal_speed * 6  # 6 frames worth of movement
+            current_x += dx * move_distance
+            current_y += dy * move_distance
+            
+            predicted_positions.append((current_x, current_y))
+        
+        self.predicted_path = predicted_positions
+    
+    def update_path_following_accuracy(self):
+        """Update how well the car is following its predicted path"""
+        if not self.predicted_path:
+            self.path_following_accuracy = 0.0
+            return
+        
+        # Find closest point on predicted path
+        min_distance = float('inf')
+        for pred_x, pred_y in self.predicted_path[:30]:  # Only check near-term predictions
+            distance = math.sqrt((self.x - pred_x)**2 + (self.y - pred_y)**2)
+            min_distance = min(min_distance, distance)
+        
+        # Convert distance to accuracy score (closer = higher accuracy)
+        max_allowed_deviation = 50  # pixels
+        accuracy = max(0.0, 1.0 - (min_distance / max_allowed_deviation))
+        
+        self.path_deviation_history.append(min_distance)
+        self.path_following_accuracy = accuracy
         
     def draw(self, camera, is_best=False):
         screen_x, screen_y = camera.world_to_screen(self.x, self.y)
@@ -357,6 +471,73 @@ class Car:
             car_screen = camera.world_to_screen(self.x, self.y)
             target_screen = camera.world_to_screen(self.target_x, self.target_y)
             pygame.draw.line(screen, (0, 255, 255), car_screen, target_screen, 2)  # Cyan line to target
+            
+        # NEW: Draw 3-second predictive path arrow with gradient effects
+        if hasattr(self, 'predicted_path') and self.predicted_path:
+            car_screen = camera.world_to_screen(self.x, self.y)
+            
+            # Draw gradient path showing next 3 seconds
+            prev_screen = car_screen
+            for i, (pred_x, pred_y) in enumerate(self.predicted_path):
+                pred_screen = camera.world_to_screen(pred_x, pred_y)
+                
+                # Gradient from bright yellow to orange to red
+                progress = i / max(1, len(self.predicted_path) - 1)
+                if progress < 0.5:
+                    # Yellow to orange
+                    t = progress * 2
+                    color = (255, int(255 * (1 - t * 0.5)), 0)  # Yellow to orange
+                else:
+                    # Orange to red
+                    t = (progress - 0.5) * 2
+                    color = (255, int(128 * (1 - t)), 0)  # Orange to red
+                
+                # Draw thicker line for early predictions, thinner for later
+                thickness = max(2, int(8 * (1 - progress)))
+                
+                # Make sure we don't go off screen
+                if (0 <= pred_screen[0] <= camera.screen_width and 
+                    0 <= pred_screen[1] <= camera.screen_height):
+                    pygame.draw.line(screen, color, prev_screen, pred_screen, thickness)
+                    
+                    # Draw direction indicators every few points
+                    if i % 5 == 0 and i > 0:
+                        # Small arrow head showing direction
+                        if i + 1 < len(self.predicted_path):
+                            next_x, next_y = self.predicted_path[i + 1]
+                            next_screen = camera.world_to_screen(next_x, next_y)
+                            
+                            # Calculate arrow direction
+                            dx = next_screen[0] - pred_screen[0]
+                            dy = next_screen[1] - pred_screen[1]
+                            arrow_length = 10 * (1 - progress * 0.5)
+                            
+                            if dx != 0 or dy != 0:
+                                angle = math.atan2(dy, dx)
+                                # Arrow head points
+                                arrow_x1 = pred_screen[0] + arrow_length * math.cos(angle - 0.5)
+                                arrow_y1 = pred_screen[1] + arrow_length * math.sin(angle - 0.5)
+                                arrow_x2 = pred_screen[0] + arrow_length * math.cos(angle + 0.5)
+                                arrow_y2 = pred_screen[1] + arrow_length * math.sin(angle + 0.5)
+                                
+                                # Draw mini arrow
+                                pygame.draw.line(screen, color, pred_screen, (int(arrow_x1), int(arrow_y1)), 2)
+                                pygame.draw.line(screen, color, pred_screen, (int(arrow_x2), int(arrow_y2)), 2)
+                
+                prev_screen = pred_screen
+            
+            # Display path following accuracy
+            if hasattr(self, 'path_following_accuracy'):
+                accuracy_color = (0, 255, 0) if self.path_following_accuracy > 0.8 else \
+                               (255, 255, 0) if self.path_following_accuracy > 0.6 else \
+                               (255, 128, 0) if self.path_following_accuracy > 0.4 else (255, 0, 0)
+                
+                # Draw accuracy indicator next to car
+                accuracy_text = f"{self.path_following_accuracy:.1%}"
+                font = pygame.font.Font(None, 16)
+                text_surface = font.render(accuracy_text, True, accuracy_color)
+                text_pos = (car_screen[0] + 20, car_screen[1] - 20)
+                screen.blit(text_surface, text_pos)
         screen_x, screen_y = camera.world_to_screen(self.x, self.y)
         
         if (screen_x < -50 or screen_x > camera.screen_width + 50 or 
@@ -438,25 +619,42 @@ class Car:
                 self.crashed = True
                 self.off_road_time += 1
 
-        # Check if stationary (for AI cars) - skip if in saved state
+        # Enhanced stationary detection (for AI cars) - skip if in saved state
         if self.use_ai and not self.saved_state:
             self.position_check_timer += 1
-            if self.position_check_timer >= 60:  # Check every second
+            if self.position_check_timer >= 30:  # Check every 0.5 seconds for more responsiveness
                 distance_moved = math.sqrt((self.x - self.last_position[0])**2 + (self.y - self.last_position[1])**2)
-                if distance_moved < 10:  # Less than 10 pixels moved in 1 second
-                    self.stationary_timer += 60
+                speed_check = abs(self.speed) < self.movement_required_speed
+                
+                # More strict stationary detection: both low movement AND low speed
+                if distance_moved < 8 or speed_check:  # Reduced threshold for movement detection
+                    self.stationary_timer += 30
+                    self.total_stationary_time += 30
+                    
+                    # Progressive penalty for being stationary
+                    if self.stationary_timer > 60:  # After 1 second of being stationary
+                        self.fitness -= 2  # Continuous penalty while stationary
+                        
+                    # Reset checkpoint streak if stationary too long
+                    if self.stationary_timer > 120:  # After 2 seconds
+                        if self.checkpoint_streak > 0:
+                            print(f"Car stationary too long - resetting checkpoint streak from {self.checkpoint_streak} to 0")
+                            self.checkpoint_streak = 0
+                            self.consecutive_fast_checkpoints = 0
                 else:
                     self.stationary_timer = 0
                 
+                # Crash if stationary for too long
                 if self.stationary_timer >= self.stationary_threshold:
                     self.crashed = True
+                    print(f"Car crashed due to being stationary for {self.stationary_timer} frames")
                     
                 self.last_position = (self.x, self.y)
                 self.position_check_timer = 0
 
     def update_raycasts(self):
         if not self.road_system:
-            self.raycast_distances = [self.raycast_length] * 5
+            self.raycast_distances = [self.raycast_length] * 8  # Updated for 8 raycasts
             return
         
         self.raycast_distances = []
@@ -486,37 +684,112 @@ class Car:
             param.data.uniform_(-1, 1)
     
     def ai_move(self):
-        if len(self.raycast_distances) < 5:
+        if len(self.raycast_distances) < 8:  # Updated for 8 raycasts
             return
         
-        # Prepare enhanced inputs for AI with route following
+        # Prepare enhanced input data for better planning
         inputs = []
         
-        # Normalize raycast distances (5 values)
-        normalized_distances = [d / self.raycast_length for d in self.raycast_distances]
-        inputs.extend(normalized_distances)
+        # 1. Raycast data (8 values) - normalized
+        for distance in self.raycast_distances:
+            inputs.append(distance / self.raycast_length)
         
-        # Add speed (normalized)
-        normalized_speed = min(1.0, abs(self.speed) / 5.0)
-        inputs.append(normalized_speed)
+        # 2. Speed (1 value) - normalized
+        inputs.append(min(1.0, abs(self.speed) / 5.0))
         
-        # Add current angle (normalized to -1 to 1)
-        normalized_angle = math.sin(math.radians(self.angle))
-        inputs.append(normalized_angle)
-        
-        # Add route following information
+        # 3. Current target direction (1 value) - normalized angle difference
         target_direction = self.get_target_direction() / 180.0  # Normalize to [-1, 1]
         inputs.append(target_direction)
         
-        target_distance = min(1.0, self.get_target_distance() / 200.0)  # Normalize to [0, 1]
+        # 4. Current target distance (1 value) - normalized
+        target_distance = min(1.0, self.get_target_distance() / 200.0)
         inputs.append(target_distance)
         
+        # 5. Velocity components (2 values) - normalized
+        velocity_x = math.sin(math.radians(self.angle)) * self.speed / 5.0
+        velocity_y = -math.cos(math.radians(self.angle)) * self.speed / 5.0
+        inputs.append(velocity_x)
+        inputs.append(velocity_y)
+        
+        # 6. Progress indicator (1 value) - how far through the path
+        if self.path_waypoints:
+            progress = self.current_waypoint_index / max(1, len(self.path_waypoints))
+        else:
+            progress = 0.0
+        inputs.append(progress)
+        
+        # 7. Next waypoint direction (1 value) - encourage looking ahead
+        next_waypoint_direction = 0.0
+        if self.path_waypoints and self.current_waypoint_index + 1 < len(self.path_waypoints):
+            next_x, next_y = self.path_waypoints[self.current_waypoint_index + 1]
+            dx = next_x - self.x
+            dy = next_y - self.y
+            next_angle = math.degrees(math.atan2(dx, -dy))
+            angle_diff = next_angle - self.angle
+            while angle_diff > 180:
+                angle_diff -= 360
+            while angle_diff < -180:
+                angle_diff += 360
+            next_waypoint_direction = angle_diff / 180.0
+        inputs.append(next_waypoint_direction)
+        
+        # 8. Path curvature ahead (1 value) - anticipate turns
+        path_curvature = 0.0
+        if (self.path_waypoints and self.current_waypoint_index + 2 < len(self.path_waypoints)):
+            # Calculate angle between current->next and next->after_next
+            curr_x, curr_y = self.path_waypoints[self.current_waypoint_index]
+            next_x, next_y = self.path_waypoints[self.current_waypoint_index + 1]
+            after_x, after_y = self.path_waypoints[self.current_waypoint_index + 2]
+            
+            angle1 = math.atan2(next_x - curr_x, -(next_y - curr_y))
+            angle2 = math.atan2(after_x - next_x, -(after_y - next_y))
+            curvature = abs(angle2 - angle1)
+            if curvature > math.pi:
+                curvature = 2 * math.pi - curvature
+            path_curvature = min(1.0, curvature / math.pi)  # Normalize to [0,1]
+        inputs.append(path_curvature)
+        
+        # 9. Path following accuracy (1 value) - how well following predicted path
+        inputs.append(self.path_following_accuracy)
+        
+        # 10. Average path deviation (1 value) - recent deviation from optimal path
+        if self.path_deviation_history:
+            avg_deviation = sum(list(self.path_deviation_history)[-10:]) / min(10, len(self.path_deviation_history))
+            normalized_deviation = min(1.0, avg_deviation / 50.0)  # Normalize with max 50 pixels
+        else:
+            normalized_deviation = 1.0  # High deviation if no history
+        inputs.append(normalized_deviation)
+        
+        # 11. Predicted direction (1 value) - where path leads in next 1 second
+        predicted_direction = 0.0
+        if self.predicted_path and len(self.predicted_path) > 10:
+            # Use prediction ~1 second ahead (30 frames ahead, sampled every 6, so index 5)
+            pred_idx = min(5, len(self.predicted_path) - 1)
+            pred_x, pred_y = self.predicted_path[pred_idx]
+            dx = pred_x - self.x
+            dy = pred_y - self.y
+            pred_angle = math.degrees(math.atan2(dx, -dy))
+            angle_diff = pred_angle - self.angle
+            while angle_diff > 180:
+                angle_diff -= 360
+            while angle_diff < -180:
+                angle_diff += 360
+            predicted_direction = angle_diff / 180.0
+        inputs.append(predicted_direction)
+        
+        # Ensure we have exactly 17 inputs
+        while len(inputs) < 17:
+            inputs.append(0.0)
+        inputs = inputs[:17]  # Trim if too many
+        
+        # Convert to tensor
         input_tensor = torch.tensor(inputs, dtype=torch.float32)
         
+        # Run AI
         with torch.no_grad():
             outputs = self.ai(input_tensor)
         
-        # AI outputs: acceleration, steering, brake
+        # Extract control outputs: acceleration, steering, brake
         acceleration = outputs[0].item()
         steering = outputs[1].item()
         brake = outputs[2].item()
@@ -552,24 +825,49 @@ class Car:
             self.angle += steering * 4.0
 
     def calculate_fitness(self):
-        # Enhanced fitness calculation with route following
+        # Enhanced fitness calculation with route following, streak rewards, and movement incentives
         base_fitness = 0
         
         # Time alive bonus
         time_bonus = self.time_alive * 0.1
         
-        # Distance traveled bonus
-        distance_bonus = self.distance_traveled * 0.5
+        # Distance traveled bonus - increased reward for movement
+        distance_bonus = self.distance_traveled * 0.7  # Increased from 0.5
         
         # Road staying bonus - big bonus for never going off road
         road_bonus = 0
         if self.off_road_time == 0:
             road_bonus = self.time_alive * 0.3  # Bigger bonus for staying on road
         
-        # Enhanced speed bonus system - reward good speed management
+        # Enhanced movement incentive system
         avg_speed = self.distance_traveled / max(1, self.time_alive)
-        speed_bonus = 0
+        movement_bonus = 0
         
+        # Reward consistent movement
+        if avg_speed > 1.0:  # Good average speed
+            movement_bonus += avg_speed * 50  # Reward for maintaining speed
+            
+        # Penalty for being stationary
+        stationary_penalty = self.total_stationary_time * 3  # Harsh penalty for cumulative stationary time
+        
+        # Enhanced checkpoint streak system
+        checkpoint_streak_bonus = 0
+        if self.checkpoint_streak > 0:
+            # Exponential bonus for longer streaks
+            streak_base = 100
+            streak_multiplier = min(self.checkpoint_streak ** 1.5, 20)  # Cap exponential growth
+            checkpoint_streak_bonus = streak_base * streak_multiplier
+            
+            # Additional bonus for max streak achieved
+            max_streak_bonus = self.max_checkpoint_streak * 75
+            checkpoint_streak_bonus += max_streak_bonus
+            
+        # Fast checkpoint streak bonus
+        fast_streak_bonus = 0
+        if self.consecutive_fast_checkpoints > 0:
+            # Bonus for consecutive fast checkpoints
+            fast_streak_bonus = (self.consecutive_fast_checkpoints ** 2) * 50  # Quadratic bonus
+            
         # Time-to-checkpoint efficiency reward system
         checkpoint_efficiency_bonus = 0
         if self.checkpoint_times:
@@ -600,11 +898,11 @@ class Car:
                 proximity_bonus = max(0, (100 - distance_to_target) / 100) * 50 * urgency_multiplier
                 current_checkpoint_bonus = proximity_bonus
         
-        # Combine all checkpoint-related bonuses
-        speed_bonus = checkpoint_efficiency_bonus + current_checkpoint_bonus
+        # Combine all speed and movement related bonuses
+        speed_bonus = movement_bonus + checkpoint_efficiency_bonus + current_checkpoint_bonus
         
         # Cap total speed bonus
-        speed_bonus = min(speed_bonus, 400)
+        speed_bonus = min(speed_bonus, 500)  # Increased cap
         
         # Pathfinding bonus - reward following calculated paths
         pathfinding_bonus = 0
@@ -619,6 +917,46 @@ class Car:
                 proximity_bonus = max(0, (100 - target_distance) / 100) * 100
                 pathfinding_bonus += proximity_bonus
                 
+        # MASSIVE REWARD SYSTEM: Path Following Accuracy (The "Arrow Following" rewards)
+        path_following_rewards = 0
+        if hasattr(self, 'path_following_accuracy') and hasattr(self, 'path_deviation_history'):
+            # Current accuracy bonus (immediate reward for following predicted path)
+            accuracy_bonus = self.path_following_accuracy * 50  # Up to 50 points per frame
+            
+            # Sustained accuracy bonus (massive rewards for consistent path following)
+            if len(self.path_deviation_history) >= 30:  # At least 0.5 seconds of data
+                recent_accuracy = []
+                recent_deviations = list(self.path_deviation_history)[-30:]  # Last 30 frames
+                for deviation in recent_deviations:
+                    frame_accuracy = max(0.0, 1.0 - (deviation / 50.0))
+                    recent_accuracy.append(frame_accuracy)
+                
+                avg_recent_accuracy = sum(recent_accuracy) / len(recent_accuracy)
+                
+                # MASSIVE rewards for sustained high accuracy (this is the key "aggressive following")
+                if avg_recent_accuracy > 0.8:  # 80%+ accuracy
+                    sustained_bonus = (avg_recent_accuracy - 0.8) * 2500  # Up to 500 bonus per update
+                    path_following_rewards += sustained_bonus
+                elif avg_recent_accuracy > 0.6:  # 60-80% accuracy
+                    sustained_bonus = (avg_recent_accuracy - 0.6) * 1000  # Up to 200 bonus per update
+                    path_following_rewards += sustained_bonus
+                elif avg_recent_accuracy > 0.4:  # 40-60% accuracy
+                    sustained_bonus = (avg_recent_accuracy - 0.4) * 250  # Up to 50 bonus per update
+                    path_following_rewards += sustained_bonus
+                
+                # Exponential bonus for near-perfect path following
+                if avg_recent_accuracy > 0.9:
+                    perfect_bonus = ((avg_recent_accuracy - 0.9) * 10) ** 2 * 100  # Exponential scaling
+                    path_following_rewards += perfect_bonus
+            
+            # Prediction accuracy bonus (reward for following the 3-second lookahead)
+            if hasattr(self, 'predicted_path') and self.predicted_path:
+                prediction_bonus = accuracy_bonus * 2  # Double reward for following predictions
+                path_following_rewards += prediction_bonus
+            
+            # Add the accuracy bonus
+            path_following_rewards += accuracy_bonus
+                
         # Massive bonus for reaching destination (saved state)
         destination_bonus = 0
         if self.destination_reached or self.saved_state:
@@ -626,13 +964,15 @@ class Car:
             if self.time_alive < 600:
                 destination_bonus += (600 - self.time_alive) * 10
 
-        # Penalties
-        crash_penalty = 300 if self.crashed else 0  # Higher crash penalty
-        off_road_penalty = self.off_road_time * 5  # Higher off-road penalty
-        stationary_penalty = self.stationary_timer * 1
+        # Enhanced penalties
+        crash_penalty = 500 if self.crashed else 0  # Increased crash penalty
+        off_road_penalty = self.off_road_time * 7  # Increased off-road penalty
         
+        # Final fitness calculation with all bonuses and penalties
         self.fitness = (
-            time_bonus + distance_bonus + road_bonus + speed_bonus + pathfinding_bonus + destination_bonus -
+            time_bonus + distance_bonus + road_bonus + speed_bonus + 
+            checkpoint_streak_bonus + fast_streak_bonus + pathfinding_bonus + 
+            path_following_rewards + destination_bonus -
             crash_penalty - off_road_penalty - stationary_penalty
         )
         
@@ -714,7 +1054,17 @@ def create_car_from_data(car_data, road_system, pathfinder):
     
     # Load AI state
     if car.use_ai and 'ai_state' in car_data:
-        car.ai.load_state_dict(car_data['ai_state'])
+        try:
+            car.ai.load_state_dict(car_data['ai_state'])
+        except RuntimeError as e:
+            if "size mismatch" in str(e):
+                print(f"Neural network architecture mismatch detected. Creating new network for compatibility.")
+                # The old network has different input size, so we'll keep the new randomly initialized network
+                # This happens when upgrading from 12-input to 17-input networks
+                pass  # Keep the new randomly initialized 17-input network
+            else:
+                # Re-raise other runtime errors
+                raise e
     
     return car
 
@@ -780,11 +1130,15 @@ def evolve_population(cars, population_size=population_size, road_system=None, p
         new_car.distance_traveled = 0
         new_car.off_road_time = 0
         new_car.stationary_timer = 0
+        new_car.total_stationary_time = 0  # Reset cumulative stationary time
         new_car.last_position = (spawn_x, spawn_y)
         new_car.position_check_timer = 0
         new_car.checkpoint_times = []  # Reset checkpoint times
         new_car.last_checkpoint_time = 0  # Reset checkpoint timing
         new_car.current_checkpoint_start_time = 0  # Reset checkpoint start time
+        new_car.checkpoint_streak = 0  # Reset checkpoint streak
+        new_car.max_checkpoint_streak = 0  # Reset max streak
+        new_car.consecutive_fast_checkpoints = 0  # Reset fast streak
         new_car.pathfinder = pathfinder  # Ensure pathfinder is set
         new_car.destination_reached = False  # Reset destination status
         new_car.saved_state = False  # Reset saved state
@@ -820,11 +1174,15 @@ def evolve_population(cars, population_size=population_size, road_system=None, p
         offspring.distance_traveled = 0
         offspring.off_road_time = 0
         offspring.stationary_timer = 0
+        offspring.total_stationary_time = 0  # Reset cumulative stationary time
         offspring.last_position = (spawn_x, spawn_y)
         offspring.position_check_timer = 0
         offspring.checkpoint_times = []  # Reset checkpoint times
         offspring.last_checkpoint_time = 0  # Reset checkpoint timing
         offspring.current_checkpoint_start_time = 0  # Reset checkpoint start time
+        offspring.checkpoint_streak = 0  # Reset checkpoint streak
+        offspring.max_checkpoint_streak = 0  # Reset max streak
+        offspring.consecutive_fast_checkpoints = 0  # Reset fast streak
         offspring.color = random.choice([RED, GREEN, BLUE])
         offspring.pathfinder = pathfinder  # Ensure pathfinder is set
         offspring.destination_reached = False  # Reset destination status
@@ -969,8 +1327,8 @@ def draw_neural_network(screen, car, x, y, width=200, height=150):
     pygame.draw.rect(screen, (20, 20, 20, 180), nn_rect)
     pygame.draw.rect(screen, WHITE, nn_rect, 2)
     
-    # Network architecture: input(9) -> hidden(64) -> hidden(64) -> output(3)
-    input_size = 9
+    # Network architecture: input(17) -> hidden(64) -> hidden(64) -> output(3)
+    input_size = 17
     hidden_size = 64
     output_size = 3
     
@@ -988,27 +1346,74 @@ def draw_neural_network(screen, car, x, y, width=200, height=150):
     # Get current network activations
     try:
         with torch.no_grad():
-            # Prepare inputs (same as in ai_move)
+            # Prepare inputs (same as in ai_move) - 17 inputs total
             inputs = []
             
-            # Raycast distances
-            normalized_distances = [d / car.raycast_length for d in car.raycast_distances]
-            inputs.extend(normalized_distances)
+            # 1. Raycast distances (8 values)
+            for distance in car.raycast_distances:
+                inputs.append(distance / car.raycast_length)
             
-            # Speed
-            normalized_speed = min(1.0, abs(car.speed) / 5.0)
-            inputs.append(normalized_speed)
+            # 2. Speed (1 value)
+            inputs.append(min(1.0, abs(car.speed) / 5.0))
             
-            # Angle
-            normalized_angle = math.sin(math.radians(car.angle))
-            inputs.append(normalized_angle)
-            
-            # Target direction and distance
+            # 3. Current target direction (1 value)
             target_direction = car.get_target_direction() / 180.0
             inputs.append(target_direction)
             
+            # 4. Current target distance (1 value)
             target_distance = min(1.0, car.get_target_distance() / 200.0)
             inputs.append(target_distance)
+            
+            # 5. Velocity components (2 values)
+            velocity_x = math.sin(math.radians(car.angle)) * car.speed / 5.0
+            velocity_y = -math.cos(math.radians(car.angle)) * car.speed / 5.0
+            inputs.append(velocity_x)
+            inputs.append(velocity_y)
+            
+            # 6. Progress indicator (1 value)
+            if car.path_waypoints:
+                progress = car.current_waypoint_index / max(1, len(car.path_waypoints))
+            else:
+                progress = 0.0
+            inputs.append(progress)
+            
+            # 7. Next waypoint direction (1 value)
+            next_waypoint_direction = 0.0
+            if car.path_waypoints and car.current_waypoint_index + 1 < len(car.path_waypoints):
+                next_x, next_y = car.path_waypoints[car.current_waypoint_index + 1]
+                dx = next_x - car.x
+                dy = next_y - car.y
+                next_angle = math.degrees(math.atan2(dx, -dy))
+                angle_diff = next_angle - car.angle
+                while angle_diff > 180:
+                    angle_diff -= 360
+                while angle_diff < -180:
+                    angle_diff += 360
+                next_waypoint_direction = angle_diff / 180.0
+            inputs.append(next_waypoint_direction)
+            
+            # 8. Path curvature ahead (1 value)
+            path_curvature = 0.0
+            if (car.path_waypoints and car.current_waypoint_index + 2 < len(car.path_waypoints)):
+                curr_x, curr_y = car.path_waypoints[car.current_waypoint_index]
+                next_x, next_y = car.path_waypoints[car.current_waypoint_index + 1]
+                after_x, after_y = car.path_waypoints[car.current_waypoint_index + 2]
+                
+                angle1 = math.atan2(next_x - curr_x, -(next_y - curr_y))
+                angle2 = math.atan2(after_x - next_x, -(after_y - next_y))
+                curvature = abs(angle2 - angle1)
+                if curvature > math.pi:
+                    curvature = 2 * math.pi - curvature
+                path_curvature = min(1.0, curvature / math.pi)
+            inputs.append(path_curvature)
+            
+            # 9. Path following accuracy (1 value)
+            inputs.append(car.path_following_accuracy if hasattr(car, 'path_following_accuracy') else 0.0)
+            
+            # Ensure we have exactly 17 inputs
+            while len(inputs) < 17:
+                inputs.append(0.0)
+            inputs = inputs[:17]
             
             input_tensor = torch.tensor(inputs, dtype=torch.float32)
             
@@ -1028,7 +1433,9 @@ def draw_neural_network(screen, car, x, y, width=200, height=150):
         final_outputs = torch.zeros(output_size)
     
     # Draw input layer
-    input_labels = ["Ray1", "Ray2", "Ray3", "Ray4", "Ray5", "Speed", "Angle", "TargetDir", "TargetDist"]
+    input_labels = ["Ray1", "Ray2", "Ray3", "Ray4", "Ray5", "Ray6", "Ray7", "Ray8", 
+                   "Speed", "TargetDir", "TargetDist", "VelX", "VelY", "Progress", 
+                   "NextWP", "Curvature", "PathAcc"]
     for i in range(input_size):
         node_y = y + (i + 1) * input_spacing
         activation = inputs[i] if i < len(inputs) else 0
@@ -1313,131 +1720,71 @@ for car in cars:
         car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
 
 evolution_timer = 0
-evolution_interval = 20 * FPS  # 20 seconds per generation (in display time)
-simulation_steps = 0  # Track total simulation steps
+evolution_interval = 20 * FPS  # 20 seconds per generation
 
 print("Starting AI cars with Dijkstra pathfinding evolution...")
-print(f"Simulation running at {SIMULATION_SPEED}x speed")
-print("Controls:")
-print("  + - Increase simulation speed")
-print("  - - Decrease simulation speed")
-print("  SPACE - Toggle pause")
-
-paused = False
 
 running = True
 while running:
-    
-    # Handle events
+    screen.fill((34, 139, 34))  # Dark green background
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             print("Saving population before exit...")
             save_population(cars, generation)
             running = False
         elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r:
-                print("Resetting to new location...")
-                # Load new random location
-                road_system = OSMRoadSystem(
-                    center_lat=random.uniform(-40, 50), 
-                    center_lon=random.uniform(-120, 120), 
-                    radius=1000
-                )
-                # Rebuild pathfinder for new location
-                pathfinder = DijkstraPathfinder(road_system)
-                road_bounds = road_system.get_road_bounds()
-                camera.set_bounds(*road_bounds)
-                
-                # Reset all cars to new random positions with individual paths to shared destination
-                # Generate new valid shared destination for new location
-                new_shared_destination = None
-                if pathfinder:
-                    for attempt in range(10):
-                        destination_node, test_destination = pathfinder.get_random_destination()
-                        if destination_node and test_destination:
-                            test_spawn_x, test_spawn_y, _ = road_system.get_random_spawn_point()
-                            test_path = pathfinder.find_path(test_spawn_x, test_spawn_y, test_destination[0], test_destination[1])
-                            if test_path:
-                                new_shared_destination = test_destination
-                                print(f"New location shared destination set at: {new_shared_destination}")
-                                break
-                
-                shared_destination = new_shared_destination
-                
-                for car in cars:
-                    if not car.crashed:
-                        spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point()
-                        car.x, car.y, car.angle = spawn_x, spawn_y, spawn_angle
-                        car.road_system = road_system
-                        car.pathfinder = pathfinder
-                        car.shared_destination = shared_destination
-                        if shared_destination:
-                            car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
-            elif event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS:  # + key
-                SIMULATION_SPEED = min(20, SIMULATION_SPEED + 1)
-                print(f"Simulation speed: {SIMULATION_SPEED}x")
-            elif event.key == pygame.K_MINUS:  # - key
-                SIMULATION_SPEED = max(1, SIMULATION_SPEED - 1)
-                print(f"Simulation speed: {SIMULATION_SPEED}x")
-            elif event.key == pygame.K_SPACE:
-                paused = not paused
-                print(f"Simulation {'paused' if paused else 'resumed'}")
+            # R key functionality disabled
+            # if event.key == pygame.K_r:
+            #     print("Resetting to new location...")
+            #     # Load new random location
+            #     road_system = OSMRoadSystem(
+            #         center_lat=random.uniform(-40, 50), 
+            #         center_lon=random.uniform(-120, 120), 
+            #         radius=1000
+            #     )
+            #     # Rebuild pathfinder for new location
+            #     pathfinder = DijkstraPathfinder(road_system)
+            #     road_bounds = road_system.get_road_bounds()
+            #     camera.set_bounds(*road_bounds)
+            #     
+            #     # Reset all cars to new random positions with individual paths to shared destination
+            #     # Generate new valid shared destination for new location
+            #     new_shared_destination = None
+            #     if pathfinder:
+            #         for attempt in range(10):
+            #             destination_node, test_destination = pathfinder.get_random_destination()
+            #             if destination_node and test_destination:
+            #                 test_spawn_x, test_spawn_y, _ = road_system.get_random_spawn_point()
+            #                 test_path = pathfinder.find_path(test_spawn_x, test_spawn_y, test_destination[0], test_destination[1])
+            #                 if test_path:
+            #                     new_shared_destination = test_destination
+            #                     print(f"New location shared destination set at: {new_shared_destination}")
+            #                     break
+            #     
+            #     shared_destination = new_shared_destination
+            #     
+            #     for car in cars:
+            #         if not car.crashed:
+            #             spawn_x, spawn_y, spawn_angle = road_system.get_random_spawn_point()
+            #             car.x, car.y, car.angle = spawn_x, spawn_y, spawn_angle
+            #             car.road_system = road_system
+            #             car.pathfinder = pathfinder
+            #             car.shared_destination = shared_destination
+            #             if shared_destination:
+            #                 car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
+            pass  # R key does nothing now
     
     keys = pygame.key.get_pressed()
     
-    # Run simulation steps (multiple per frame for speed)
-    if not paused:
-        for sim_step in range(SIMULATION_SPEED):
-            simulation_steps += 1
-            
-            # Find best car and count alive cars (including saved cars)
-            alive_cars = 0
-            saved_cars = 0
-            best_car = None
-            for car in cars:
-                if not car.crashed or car.saved_state:
-                    if simulation_steps % 30 == 0:  # Update fitness occasionally
-                        car.calculate_fitness()
-                    if best_car is None or car.fitness > best_car.fitness:
-                        best_car = car
-                    alive_cars += 1
-                    if car.saved_state:
-                        saved_cars += 1
-            
-            # Update cars (simulation step)
-            for car in cars:
-                if not car.crashed or car.saved_state:  # Process saved cars too for display
-                    if not car.saved_state:  # Only move cars that aren't saved
-                        car.update_raycasts()
-                        car.move(keys)
-                        
-                        # Check if car reached destination
-                        if (car.target_x is None and car.target_y is None and 
-                            len(car.path_waypoints) > 0 and 
-                            car.current_waypoint_index >= len(car.path_waypoints) and
-                            not car.destination_reached):
-                            car.destination_reached = True
-                            car.saved_state = True
-                            print(f"Car reached destination! Total time: {car.time_alive} frames")
-            
-            # Evolution logic
-            evolution_timer += 1
-            if evolution_timer >= evolution_interval or alive_cars == 0:
-                cars, shared_destination = evolve_population(cars, population_size, road_system, pathfinder, shared_destination, generation)
-                evolution_timer = 0
-                generation += 1
-                print(f"Generation {generation} started")
-                break  # Exit simulation loop to render
-    
-    # Rendering (once per display frame)
-    screen.fill((34, 139, 34))  # Dark green background
-    
-    # Find best car for display (recalculate for rendering)
-    best_car = None
+    # Find best car and count alive cars (including saved cars)
     alive_cars = 0
     saved_cars = 0
+    best_car = None
     for car in cars:
         if not car.crashed or car.saved_state:
+            if evolution_timer % 30 == 0:  # Update fitness occasionally
+                car.calculate_fitness()
             if best_car is None or car.fitness > best_car.fitness:
                 best_car = car
             alive_cars += 1
@@ -1452,19 +1799,33 @@ while running:
     # Draw roads
     road_system.draw_roads(screen, camera.x, camera.y, WIDTH, HEIGHT, camera.zoom)
     
-    # Draw cars (rendering only)
+    # Update and draw cars
     for car in cars:
         if not car.crashed or car.saved_state:  # Draw saved cars too
+            if not car.saved_state:  # Only move cars that aren't saved
+                # Calculate predictive path and accuracy
+                if evolution_timer % 10 == 0:  # Update every 10 frames for performance
+                    car.calculate_predictive_path()
+                car.update_path_following_accuracy()
+                
+                car.move(keys)
             is_best = (car == best_car)
+            if (is_best or evolution_timer % 3 == 0) and not car.saved_state:
+                car.update_raycasts()
+            
             car.draw(camera, is_best)
     
-    # Display info with simulation speed and saved cars count
+    # Evolution logic
+    evolution_timer += 1
+    if evolution_timer >= evolution_interval or alive_cars == 0:
+        cars, shared_destination = evolve_population(cars, population_size, road_system, pathfinder, shared_destination, generation)
+        evolution_timer = 0
+        generation += 1
+        print(f"Generation {generation} started")
+    
+    # Display info with saved cars count and checkpoint streaks
     font = pygame.font.Font(None, 36)
-    info_text = f"Gen: {generation} | Alive: {alive_cars} | Saved: {saved_cars} | Speed: {SIMULATION_SPEED}x"
-    if paused:
-        info_text += " | PAUSED"
-    else:
-        info_text += f" | Time: {evolution_timer // FPS}s"
+    info_text = f"Gen: {generation} | Alive: {alive_cars} | Saved: {saved_cars} | Time: {evolution_timer // FPS}s"
     if best_car:
         info_text += f" | Best: {best_car.fitness:.1f}"
         if best_car.saved_state:
@@ -1477,24 +1838,25 @@ while running:
     pygame.draw.rect(screen, (0, 0, 0, 128), text_rect.inflate(10, 5))
     screen.blit(text_surface, text_rect)
     
-    # Display pathfinding info with performance stats and controls
-    pathfinding_info = f"Shared Destination: All cars find individual paths to the same goal!"
+    # Display checkpoint streak info for best car
+    if best_car:
+        streak_font = pygame.font.Font(None, 28)
+        streak_text = f"Best Car - Checkpoint Streak: {best_car.checkpoint_streak} | Max Streak: {best_car.max_checkpoint_streak} | Fast Streak: {best_car.consecutive_fast_checkpoints}"
+        streak_surface = streak_font.render(streak_text, True, YELLOW)
+        streak_rect = streak_surface.get_rect()
+        streak_rect.topleft = (10, text_rect.bottom + 5)
+        
+        pygame.draw.rect(screen, (0, 0, 0, 128), streak_rect.inflate(10, 5))
+        screen.blit(streak_surface, streak_rect)
+    
+    # Display pathfinding info with performance stats
+    pathfinding_info = f"Pathfinding: {len(cars)} cars | Shared Destination: {shared_destination if shared_destination else 'None'}"
     pathfinding_surface = font.render(pathfinding_info, True, WHITE)
     pathfinding_rect = pathfinding_surface.get_rect()
-    pathfinding_rect.topleft = (10, text_rect.bottom + 10)
+    pathfinding_rect.topleft = (10, (streak_rect.bottom if best_car else text_rect.bottom) + 10)
     
     pygame.draw.rect(screen, (0, 0, 0, 128), pathfinding_rect.inflate(10, 5))
     screen.blit(pathfinding_surface, pathfinding_rect)
-    
-    # Display controls
-    controls_font = pygame.font.Font(None, 24)
-    controls_text = "Controls: +/- Speed | SPACE Pause | R Reset"
-    controls_surface = controls_font.render(controls_text, True, WHITE)
-    controls_rect = controls_surface.get_rect()
-    controls_rect.topleft = (10, pathfinding_rect.bottom + 5)
-    
-    pygame.draw.rect(screen, (0, 0, 0, 128), controls_rect.inflate(10, 5))
-    screen.blit(controls_surface, controls_rect)
     
     # Draw AI control visualization for best car
     if best_car:
