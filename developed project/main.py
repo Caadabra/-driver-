@@ -20,7 +20,7 @@ population_size = 30
 
 WIDTH, HEIGHT = 1280, 720
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("AI Cars Learning on Real Roads")
+pygame.display.set_caption("{driver}")
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -141,7 +141,8 @@ class Car:
         
         # Predictive path system for 3-second lookahead
         self.prediction_horizon = 180  # 3 seconds at 60 FPS
-        self.predicted_path = []  # List of (x, y) positions for next 3 seconds
+        self.predicted_path = []  # List of (x, y) positions for next 3 seconds (OPTIMAL path)
+        self.ai_predicted_path = []  # List of (x, y) positions showing what AI will actually do
         self.path_following_accuracy = 0.0  # How well following predicted path
         self.path_deviation_history = deque(maxlen=60)  # Track recent deviations
         
@@ -376,6 +377,124 @@ class Car:
         
         self.predicted_path = predicted_positions
     
+    def calculate_ai_predicted_path(self):
+        """Calculate where the car will actually go based on AI decisions (not optimal path)"""
+        if not self.use_ai or len(self.raycast_distances) < 8:
+            self.ai_predicted_path = []
+            return
+        
+        ai_predicted_positions = []
+        
+        # Start with current state
+        sim_x = self.x
+        sim_y = self.y
+        sim_angle = self.angle
+        sim_speed = self.speed
+        
+        # Simulate AI behavior for next 2 seconds
+        for frame in range(0, 120, 3):  # 2 seconds, sample every 3 frames for performance
+            # Simulate raycasts from this predicted position
+            sim_raycast_distances = []
+            if self.road_system:
+                for angle_offset in self.raycast_angles:
+                    ray_angle = sim_angle + angle_offset
+                    distance = self.road_system.raycast_to_road_edge(
+                        sim_x, sim_y, ray_angle, self.raycast_length
+                    )
+                    sim_raycast_distances.append(distance)
+            else:
+                sim_raycast_distances = [self.raycast_length] * 8
+            
+            # Prepare AI inputs using the same logic as ai_move()
+            inputs = []
+            
+            # 1. Raycast data (8 values) - normalized
+            for distance in sim_raycast_distances:
+                inputs.append(distance / self.raycast_length)
+            
+            # 2. Speed (1 value) - normalized
+            inputs.append(min(1.0, abs(sim_speed) / 5.0))
+            
+            # 3. Current target direction (1 value) - normalized angle difference
+            if self.target_x is not None and self.target_y is not None:
+                dx = self.target_x - sim_x
+                dy = self.target_y - sim_y
+                target_angle = math.degrees(math.atan2(dx, -dy))
+                angle_diff = target_angle - sim_angle
+                while angle_diff > 180:
+                    angle_diff -= 360
+                while angle_diff < -180:
+                    angle_diff += 360
+                target_direction = angle_diff / 180.0
+            else:
+                target_direction = 0.0
+            inputs.append(target_direction)
+            
+            # 4. Current target distance (1 value) - normalized
+            if self.target_x is not None and self.target_y is not None:
+                target_distance = min(1.0, math.sqrt((sim_x - self.target_x)**2 + (sim_y - self.target_y)**2) / 200.0)
+            else:
+                target_distance = 0.0
+            inputs.append(target_distance)
+            
+            # 5. Velocity components (2 values) - normalized
+            velocity_x = math.sin(math.radians(sim_angle)) * sim_speed / 5.0
+            velocity_y = -math.cos(math.radians(sim_angle)) * sim_speed / 5.0
+            inputs.append(velocity_x)
+            inputs.append(velocity_y)
+            
+            # 6-11. Add simplified versions of other inputs (using current values for simplicity)
+            inputs.append(self.current_waypoint_index / max(1, len(self.path_waypoints)) if self.path_waypoints else 0.0)  # Progress
+            inputs.append(0.0)  # Next waypoint direction (simplified)
+            inputs.append(0.0)  # Path curvature (simplified)
+            inputs.append(self.path_following_accuracy)  # Path following accuracy
+            inputs.append(0.5)  # Average deviation (simplified)
+            inputs.append(0.0)  # Predicted direction (simplified to avoid recursion)
+            
+            # Ensure we have exactly 17 inputs
+            while len(inputs) < 17:
+                inputs.append(0.0)
+            inputs = inputs[:17]
+            
+            # Get AI decision for this simulated state
+            input_tensor = torch.tensor(inputs, dtype=torch.float32)
+            with torch.no_grad():
+                outputs = self.ai(input_tensor)
+            
+            # Extract AI decisions
+            acceleration = outputs[0].item()
+            steering = outputs[1].item()
+            brake = outputs[2].item()
+            
+            # Apply AI decisions to simulated car state
+            if abs(brake) > abs(acceleration) and brake > 0:
+                sim_speed -= brake * 0.4
+            elif acceleration > 0:
+                sim_speed += acceleration * 0.25
+            elif acceleration < 0:
+                sim_speed += acceleration * 0.2
+            
+            # Prevent going backwards and cap speed
+            if sim_speed < 0:
+                sim_speed = 0
+            if sim_speed > 4.0:
+                sim_speed = 4.0
+            
+            # Apply steering
+            if abs(sim_speed) > 0.1:
+                sim_angle += steering * 4.0
+            
+            # Apply friction
+            sim_speed *= 0.95
+            
+            # Update position based on new speed and angle
+            sim_x += math.sin(math.radians(sim_angle)) * sim_speed
+            sim_y -= math.cos(math.radians(sim_angle)) * sim_speed
+            
+            ai_predicted_positions.append((sim_x, sim_y))
+        
+        self.ai_predicted_path = ai_predicted_positions
+    
     def update_path_following_accuracy(self):
         """Update how well the car is following its predicted path"""
         if not self.predicted_path:
@@ -424,9 +543,9 @@ class Car:
         # Draw raycasts for best car
         if is_best:
             self.draw_raycasts(camera)
-            self.draw_route(camera)
+            self.draw_route(camera, is_best)
     
-    def draw_route(self, camera):
+    def draw_route(self, camera, is_best=False):
         """Draw the pathfinding route waypoints and current target"""
         if not self.path_waypoints:
             return
@@ -538,6 +657,73 @@ class Car:
                 text_surface = font.render(accuracy_text, True, accuracy_color)
                 text_pos = (car_screen[0] + 20, car_screen[1] - 20)
                 screen.blit(text_surface, text_pos)
+        
+        # NEW: Draw AI predicted path (what the AI will actually do) in a different color
+        # Only show for best car to improve performance
+        if is_best and hasattr(self, 'ai_predicted_path') and self.ai_predicted_path:
+            car_screen = camera.world_to_screen(self.x, self.y)
+            
+            # Draw AI prediction path showing what AI will actually do (in purple/magenta tones)
+            prev_screen = car_screen
+            for i, (pred_x, pred_y) in enumerate(self.ai_predicted_path):
+                pred_screen = camera.world_to_screen(pred_x, pred_y)
+                
+                # Purple to magenta to pink gradient for AI predictions
+                progress = i / max(1, len(self.ai_predicted_path) - 1)
+                if progress < 0.5:
+                    # Purple to magenta
+                    t = progress * 2
+                    color = (int(128 + 127 * t), 0, int(128 + 127 * t))  # Purple to magenta
+                else:
+                    # Magenta to pink
+                    t = (progress - 0.5) * 2
+                    color = (255, int(128 * t), int(255 - 127 * t))  # Magenta to pink
+                
+                # Draw slightly thinner line than optimal path to distinguish
+                thickness = max(1, int(6 * (1 - progress * 0.7)))
+                
+                # Make sure we don't go off screen
+                if (0 <= pred_screen[0] <= camera.screen_width and 
+                    0 <= pred_screen[1] <= camera.screen_height):
+                    pygame.draw.line(screen, color, prev_screen, pred_screen, thickness)
+                    
+                    # Draw smaller direction indicators for AI predictions
+                    if i % 6 == 0 and i > 0:  # Less frequent arrows
+                        # Small arrow head showing AI's predicted direction
+                        if i + 1 < len(self.ai_predicted_path):
+                            next_x, next_y = self.ai_predicted_path[i + 1]
+                            next_screen = camera.world_to_screen(next_x, next_y)
+                            
+                            # Calculate arrow direction
+                            dx = next_screen[0] - pred_screen[0]
+                            dy = next_screen[1] - pred_screen[1]
+                            arrow_length = 8 * (1 - progress * 0.6)  # Smaller arrows
+                            
+                            if dx != 0 or dy != 0:
+                                angle = math.atan2(dy, dx)
+                                # Arrow head points
+                                arrow_x1 = pred_screen[0] + arrow_length * math.cos(angle - 0.6)
+                                arrow_y1 = pred_screen[1] + arrow_length * math.sin(angle - 0.6)
+                                arrow_x2 = pred_screen[0] + arrow_length * math.cos(angle + 0.6)
+                                arrow_y2 = pred_screen[1] + arrow_length * math.sin(angle + 0.6)
+                                
+                                # Draw mini arrow for AI prediction
+                                pygame.draw.line(screen, color, pred_screen, (int(arrow_x1), int(arrow_y1)), 1)
+                                pygame.draw.line(screen, color, pred_screen, (int(arrow_x2), int(arrow_y2)), 1)
+                
+                prev_screen = pred_screen
+            
+            # Add legend text to show what each path represents (only for best car)
+            font = pygame.font.Font(None, 16)
+            optimal_text = font.render("OPTIMAL PATH", True, (255, 255, 0))
+            ai_text = font.render("AI PREDICTION", True, (255, 0, 255))
+            
+            # Position legend in top-right of car area
+            legend_x = car_screen[0] + 30
+            legend_y = car_screen[1] - 40
+            
+            screen.blit(optimal_text, (legend_x, legend_y))
+            screen.blit(ai_text, (legend_x, legend_y + 16))
         screen_x, screen_y = camera.world_to_screen(self.x, self.y)
         
         if (screen_x < -50 or screen_x > camera.screen_width + 50 or 
@@ -1806,6 +1992,9 @@ while running:
                 # Calculate predictive path and accuracy
                 if evolution_timer % 10 == 0:  # Update every 10 frames for performance
                     car.calculate_predictive_path()
+                    # Only calculate expensive AI prediction visualization for best car
+                    if car == best_car:
+                        car.calculate_ai_predicted_path()  # Calculate what AI will actually do
                 car.update_path_following_accuracy()
                 
                 car.move(keys)
