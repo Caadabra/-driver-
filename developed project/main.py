@@ -99,14 +99,6 @@ class Car:
         self.off_road_time = 0
         self.max_off_road_time = 180  # 3 seconds at 60 FPS
         
-        # Enhanced stationary detection with penalties
-        self.stationary_timer = 0
-        self.stationary_threshold = 200  # Reduced to 3.33 seconds (more strict)
-        self.last_position = (x, y)
-        self.position_check_timer = 0
-        self.total_stationary_time = 0  # Track cumulative stationary time
-        self.movement_required_speed = 0.3  # Minimum speed to be considered moving
-        
         # Enhanced checkpoint tracking with streak rewards
         self.checkpoint_times = []  # Track time taken to reach each checkpoint
         self.last_checkpoint_time = 0  # When the last checkpoint was reached
@@ -119,12 +111,12 @@ class Car:
             # Enhanced AI with more raycasts: 8 raycasts + speed + angle + target_direction + target_distance
             self.ai = SimpleCarAI(input_size=17, hidden_size=64, output_size=3)
             self.randomize_weights()
-            
+
         # AI control visualization
         self.ai_acceleration = 0
         self.ai_steering = 0
         self.ai_brake = 0
-        
+
         # Pathfinding system
         self.current_path = []  # List of node IDs
         self.path_waypoints = []  # List of (x, y) waypoints
@@ -137,33 +129,126 @@ class Car:
         self.pathfinding_interval = 300  # Recalculate path every 5 seconds
         self.destination_reached = False  # Track if destination was reached
         self.saved_state = False  # Track if car is in saved state
-        self.shared_destination = None  # All cars share the same destination
-        
+        self.individual_destination = None  # Each car has its own unique destination
+
         # Predictive path system for 3-second lookahead
         self.prediction_horizon = 180  # 3 seconds at 60 FPS
         self.predicted_path = []  # List of (x, y) positions for next 3 seconds (OPTIMAL path)
         self.ai_predicted_path = []  # List of (x, y) positions showing what AI will actually do
         self.path_following_accuracy = 0.0  # How well following predicted path
         self.path_deviation_history = deque(maxlen=60)  # Track recent deviations
+
+        # Progress validation system to prevent undeserved rewards
+        self.initial_destination_distance = None  # Distance to destination when path was generated
+        self.last_destination_distance = None  # Track if we're actually getting closer
+        self.progress_validation_timer = 0  # Check progress periodically
+        self.path_generation_time = 0  # When the current path was generated
+        self.valid_checkpoints_only = True  # Only award checkpoints for real progress
+
+        # Generate individual destination and path immediately
+        if self.pathfinder:
+            self.generate_individual_destination()
+
+    def _resample_waypoints_evenly(self, spacing=150):
+        """Resample current path_waypoints so checkpoints are evenly spaced along the path length.
+        Keeps the final destination. Spacing in pixels."""
+        if not self.path_waypoints or len(self.path_waypoints) < 2:
+            return
+        pts = self.path_waypoints
+        # Compute cumulative distances
+        dists = [0.0]
+        for i in range(1, len(pts)):
+            dx = pts[i][0] - pts[i-1][0]
+            dy = pts[i][1] - pts[i-1][1]
+            dists.append(dists[-1] + math.hypot(dx, dy))
+        total = dists[-1]
+        if total < spacing * 0.5:  # Too short to resample
+            return
+        new_pts = [pts[0]]
+        target = spacing
+        seg_index = 1
+        while target < total:
+            # Advance to segment containing target
+            while seg_index < len(dists) and dists[seg_index] < target:
+                seg_index += 1
+            if seg_index >= len(dists):
+                break
+            # Interpolate within segment
+            prev_idx = seg_index - 1
+            seg_len = dists[seg_index] - dists[prev_idx]
+            if seg_len == 0:
+                target += spacing
+                continue
+            t = (target - dists[prev_idx]) / seg_len
+            x = pts[prev_idx][0] + (pts[seg_index][0] - pts[prev_idx][0]) * t
+            y = pts[prev_idx][1] + (pts[seg_index][1] - pts[prev_idx][1]) * t
+            new_pts.append((x, y))
+            target += spacing
+        # Ensure final destination is included
+        if new_pts[-1] != pts[-1]:
+            new_pts.append(pts[-1])
+        self.path_waypoints = new_pts
+    
+    def generate_individual_destination(self):
+        """Generate a unique destination for this car"""
+        if not self.pathfinder:
+            return
         
-        # Don't generate path immediately - wait for shared destination to be set
+        # Try to find a random reachable destination
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            destination_node, destination_pos = self.pathfinder.get_random_destination()
+            if destination_node:
+                # Make sure it's not too close to starting position
+                distance_to_dest = math.sqrt(
+                    (self.x - destination_pos[0])**2 + (self.y - destination_pos[1])**2
+                )
+                if distance_to_dest > 300:  # Minimum 300 pixels away
+                    path = self.pathfinder.find_path(self.x, self.y, destination_pos[0], destination_pos[1])
+                    if path:
+                        self.current_path = path
+                        self.path_waypoints = self.pathfinder.path_to_waypoints(path)
+                        self._resample_waypoints_evenly()
+                        self.individual_destination = destination_pos
+                        self.current_waypoint_index = 0
+                        
+                        # Initialize progress validation
+                        self.initial_destination_distance = distance_to_dest
+                        self.last_destination_distance = self.initial_destination_distance
+                        self.path_generation_time = self.time_alive
+                        
+                        self.update_current_target()
+                        print(f"Car generated individual destination at {destination_pos} (distance: {distance_to_dest:.1f})")
+                        return
+        
+        print("Failed to generate individual destination - car will use fallback")
+        self.try_fallback_destination()
     
     def generate_path_to_destination(self, destination_pos):
-        """Generate a path to the shared destination using Dijkstra's algorithm"""
+        """Generate a path to a specific destination using Dijkstra's algorithm"""
         if not self.pathfinder or not destination_pos:
             print("No pathfinder or destination available")
             return
         
-        # Find path from current position to the shared destination
+        # Find path from current position to the destination
         path = self.pathfinder.find_path(self.x, self.y, destination_pos[0], destination_pos[1])
         
         if path:
             self.current_path = path
             self.path_waypoints = self.pathfinder.path_to_waypoints(path)
-            self.shared_destination = destination_pos
+            self._resample_waypoints_evenly()
+            self.individual_destination = destination_pos
             self.current_waypoint_index = 0
+            
+            # Initialize progress validation
+            self.initial_destination_distance = math.sqrt(
+                (self.x - destination_pos[0])**2 + (self.y - destination_pos[1])**2
+            )
+            self.last_destination_distance = self.initial_destination_distance
+            self.path_generation_time = self.time_alive
+            
             self.update_current_target()
-            print(f"Car generated individual path with {len(path)} waypoints to shared destination {destination_pos}")
+            print(f"Car generated individual path with {len(path)} waypoints to destination {destination_pos}")
         else:
             print(f"No path found to shared destination at {destination_pos}. Trying fallback...")
             # Fallback: try to find a path to a nearby reachable point
@@ -183,6 +268,7 @@ class Car:
                 if path:
                     self.current_path = path
                     self.path_waypoints = self.pathfinder.path_to_waypoints(path)
+                    self._resample_waypoints_evenly()
                     self.current_waypoint_index = 0
                     self.update_current_target()
                     print(f"Car using fallback destination at {fallback_pos}")
@@ -190,27 +276,40 @@ class Car:
         
         print("No fallback destination found - car will wander")
     
-    def generate_new_path_to_shared_destination(self):
-        """Generate a new path to the shared destination"""
-        if not self.pathfinder or not self.shared_destination:
+    def generate_new_path_to_individual_destination(self):
+        """Generate a new path to the individual destination"""
+        if not self.pathfinder or not self.individual_destination:
+            # If no individual destination, generate a new one
+            self.generate_individual_destination()
             return
         
-        # Find path from current position to shared destination
-        path = self.pathfinder.find_path(self.x, self.y, self.shared_destination[0], self.shared_destination[1])
+        # Find path from current position to individual destination
+        path = self.pathfinder.find_path(self.x, self.y, self.individual_destination[0], self.individual_destination[1])
         
         if path:
             self.current_path = path
             self.path_waypoints = self.pathfinder.path_to_waypoints(path)
+            self._resample_waypoints_evenly()
             self.current_waypoint_index = 0
+            
+            # Update progress validation for new path
+            if self.individual_destination:
+                current_destination_distance = math.sqrt(
+                    (self.x - self.individual_destination[0])**2 + (self.y - self.individual_destination[1])**2
+                )
+                self.last_destination_distance = current_destination_distance
+                self.path_generation_time = self.time_alive
+            
             self.update_current_target()
-            print(f"Car generated new individual path with {len(path)} waypoints to shared destination")
+            print(f"Car generated new individual path with {len(path)} waypoints to destination")
         else:
-            print("No path found to shared destination, trying fallback...")
-            self.try_fallback_destination()
+            print("No path found to individual destination, generating new destination...")
+            self.generate_individual_destination()
     
     def set_route(self, waypoints):
         """Set a route for the car to follow (for compatibility)"""
         self.path_waypoints = waypoints.copy()
+        self._resample_waypoints_evenly()
         self.current_waypoint_index = 0
         self.update_current_target()
     
@@ -225,12 +324,11 @@ class Car:
             if not self.destination_reached:
                 self.destination_reached = True
                 self.saved_state = True
-                print(f"Car reached shared destination! Entering saved state with bonus fitness.")
+                print(f"Car reached individual destination! Entering saved state with bonus fitness.")
                 # Give massive bonus for reaching destination
                 self.fitness += 1000
-                # Generate a new path to the same shared destination for continuous pathfinding
-                if self.shared_destination:
-                    self.generate_new_path_to_shared_destination()
+                # Generate a new individual destination for continuous learning
+                self.generate_individual_destination()
             else:
                 self.target_x = None
                 self.target_y = None
@@ -242,28 +340,36 @@ class Car:
         
         distance_to_target = math.sqrt((self.x - self.target_x)**2 + (self.y - self.target_y)**2)
         if distance_to_target < self.waypoint_reach_distance:
+            # VALIDATION: Only award checkpoint bonus if actually making progress toward destination
+            is_valid_checkpoint = self.validate_checkpoint_progress()
+            
             # Calculate time taken to reach this checkpoint
             time_to_checkpoint = self.time_alive - self.current_checkpoint_start_time
             self.checkpoint_times.append(time_to_checkpoint)
             self.last_checkpoint_time = self.time_alive
             
-            # Update checkpoint streaks
-            self.checkpoint_streak += 1
-            self.max_checkpoint_streak = max(self.max_checkpoint_streak, self.checkpoint_streak)
-            
-            # Check if this was a fast checkpoint completion
-            ideal_time = 180  # 3 seconds at 60 FPS
-            if time_to_checkpoint <= ideal_time * 1.2:  # Within 20% of ideal time
-                self.consecutive_fast_checkpoints += 1
+            # Update checkpoint streaks for valid checkpoints
+            if is_valid_checkpoint:
+                self.checkpoint_streak += 1
+                self.max_checkpoint_streak = max(self.max_checkpoint_streak, self.checkpoint_streak)
+                
+                # Check if this was a fast checkpoint completion
+                ideal_time = 180  # 3 seconds at 60 FPS
+                if time_to_checkpoint <= ideal_time * 1.2:  # Within 20% of ideal time
+                    self.consecutive_fast_checkpoints += 1
+                else:
+                    self.consecutive_fast_checkpoints = 0  # Reset fast streak
             else:
-                self.consecutive_fast_checkpoints = 0  # Reset fast streak
+                # Invalid checkpoint - reset streaks but no harsh penalty
+                self.checkpoint_streak = 0
+                self.consecutive_fast_checkpoints = 0
             
             # Advance to next waypoint
             self.current_waypoint_index += 1
             self.update_current_target()
             
-            # Enhanced bonus fitness for reaching waypoints
-            if self.use_ai:
+            # Enhanced bonus fitness for reaching waypoints (ONLY for valid checkpoints)
+            if self.use_ai and is_valid_checkpoint:
                 base_waypoint_bonus = 50
                 
                 # Time efficiency bonus - reward faster checkpoint completion
@@ -285,6 +391,49 @@ class Car:
                           f"bonus: {total_bonus:.1f} (streak: {streak_multiplier:.1f}x, fast streak: {self.consecutive_fast_checkpoints})")
                 else:
                     self.fitness += base_waypoint_bonus
+    
+    def validate_checkpoint_progress(self):
+        """Validate that reaching this checkpoint represents real progress toward the destination"""
+        if not self.individual_destination:
+            return True  # No destination to validate against
+        
+        # Calculate current distance to individual destination
+        current_destination_distance = math.sqrt(
+            (self.x - self.individual_destination[0])**2 + (self.y - self.individual_destination[1])**2
+        )
+        
+        # Validation criteria:
+        # 1. Must be closer to destination than when path was generated (or very recently)
+        time_since_path_gen = self.time_alive - self.path_generation_time
+        if time_since_path_gen < 120:  # Within 2 seconds of path generation, be lenient
+            min_required_progress = 0.95  # Allow 5% tolerance for new paths
+        else:
+            min_required_progress = 0.98  # Require actual progress for older paths
+        
+        # 2. Must be making overall progress (closer than initial distance)
+        if self.initial_destination_distance:
+            progress_ratio = current_destination_distance / self.initial_destination_distance
+            making_overall_progress = progress_ratio <= min_required_progress
+        else:
+            making_overall_progress = True
+        
+        # 3. Must be closer than the last time we checked (or similar)
+        if self.last_destination_distance:
+            recent_progress_ratio = current_destination_distance / self.last_destination_distance
+            making_recent_progress = recent_progress_ratio <= 1.02  # Allow 2% tolerance for local detours
+        else:
+            making_recent_progress = True
+        
+        # Update tracking
+        self.last_destination_distance = current_destination_distance
+        
+        # Checkpoint is valid if making both overall and recent progress
+        is_valid = making_overall_progress and making_recent_progress
+        
+        if not is_valid:
+            print(f"Invalid checkpoint: overall_progress={progress_ratio:.3f}, recent_progress={recent_progress_ratio:.3f}")
+        
+        return is_valid
     
     def get_target_direction(self):
         """Get the direction to the current target as an angle difference"""
@@ -558,12 +707,12 @@ class Car:
                 pygame.draw.circle(screen, (0, 255, 255), screen_pos, 12)  # Cyan for current target
                 pygame.draw.circle(screen, (255, 255, 255), screen_pos, 12, 3)  # White border
             elif i == len(self.path_waypoints) - 1:
-                # Final destination - special marker for shared destination
-                pygame.draw.circle(screen, (255, 100, 100), screen_pos, 12)  # Red-orange for shared destination
+                # Final destination - special marker for individual destination
+                pygame.draw.circle(screen, (255, 100, 100), screen_pos, 12)  # Red-orange for individual destination
                 pygame.draw.circle(screen, (255, 255, 255), screen_pos, 12, 3)  # White border
                 # Add destination text
                 font = pygame.font.Font(None, 20)
-                dest_text = "SHARED"
+                dest_text = "GOAL"
                 text_surface = font.render(dest_text, True, (255, 255, 255))
                 text_rect = text_surface.get_rect(center=(screen_pos[0], screen_pos[1] - 20))
                 screen.blit(text_surface, text_rect)
@@ -774,14 +923,30 @@ class Car:
         if self.use_ai and self.path_waypoints and not self.saved_state:
             self.check_waypoint_reached()
             
-            # Periodically recalculate path to ensure optimal route
+            # More conservative path recalculation to prevent exploitation
             self.pathfinding_timer += 1
             if self.pathfinding_timer >= self.pathfinding_interval:
                 self.pathfinding_timer = 0
-                if self.pathfinder and not self.destination_reached and self.shared_destination:
-                    # Only recalculate if we're not close to destination
-                    if len(self.path_waypoints) - self.current_waypoint_index > 3:
-                        self.generate_new_path_to_shared_destination()
+                if self.pathfinder and not self.destination_reached and self.individual_destination:
+                    # Only recalculate if we're far from destination AND making poor progress
+                    current_dest_distance = math.sqrt(
+                        (self.x - self.individual_destination[0])**2 + (self.y - self.individual_destination[1])**2
+                    )
+                    time_since_path = self.time_alive - self.path_generation_time
+                    
+                    # Conditions for path recalculation:
+                    # 1. Far from destination (>200 pixels)
+                    # 2. Have been using current path for a while (>10 seconds)
+                    # 3. Have many waypoints left (>5)
+                    should_recalculate = (
+                        current_dest_distance > 200 and
+                        time_since_path > 600 and  # 10 seconds
+                        len(self.path_waypoints) - self.current_waypoint_index > 5
+                    )
+                    
+                    if should_recalculate:
+                        print(f"Car recalculating path: dist={current_dest_distance:.1f}, time_since={time_since_path}, waypoints_left={len(self.path_waypoints) - self.current_waypoint_index}")
+                        self.generate_new_path_to_individual_destination()
         
         # Track distance for AI
         if self.use_ai:
@@ -804,39 +969,19 @@ class Car:
                 # Immediate crash when hitting green (off-road)
                 self.crashed = True
                 self.off_road_time += 1
-
-        # Enhanced stationary detection (for AI cars) - skip if in saved state
-        if self.use_ai and not self.saved_state:
-            self.position_check_timer += 1
-            if self.position_check_timer >= 30:  # Check every 0.5 seconds for more responsiveness
-                distance_moved = math.sqrt((self.x - self.last_position[0])**2 + (self.y - self.last_position[1])**2)
-                speed_check = abs(self.speed) < self.movement_required_speed
+        
+        # Progress validation - check if making progress toward destination
+        if self.use_ai and not self.saved_state and self.individual_destination:
+            self.progress_validation_timer += 1
+            if self.progress_validation_timer >= 180:  # Check every 3 seconds
+                self.progress_validation_timer = 0
                 
-                # More strict stationary detection: both low movement AND low speed
-                if distance_moved < 8 or speed_check:  # Reduced threshold for movement detection
-                    self.stationary_timer += 30
-                    self.total_stationary_time += 30
-                    
-                    # Progressive penalty for being stationary
-                    if self.stationary_timer > 60:  # After 1 second of being stationary
-                        self.fitness -= 2  # Continuous penalty while stationary
-                        
-                    # Reset checkpoint streak if stationary too long
-                    if self.stationary_timer > 120:  # After 2 seconds
-                        if self.checkpoint_streak > 0:
-                            print(f"Car stationary too long - resetting checkpoint streak from {self.checkpoint_streak} to 0")
-                            self.checkpoint_streak = 0
-                            self.consecutive_fast_checkpoints = 0
-                else:
-                    self.stationary_timer = 0
+                current_destination_distance = math.sqrt(
+                    (self.x - self.individual_destination[0])**2 + (self.y - self.individual_destination[1])**2
+                )
                 
-                # Crash if stationary for too long
-                if self.stationary_timer >= self.stationary_threshold:
-                    self.crashed = True
-                    print(f"Car crashed due to being stationary for {self.stationary_timer} frames")
-                    
-                self.last_position = (self.x, self.y)
-                self.position_check_timer = 0
+                # Update tracking for validation
+                self.last_destination_distance = current_destination_distance
 
     def update_raycasts(self):
         if not self.road_system:
@@ -1011,155 +1156,87 @@ class Car:
             self.angle += steering * 4.0
 
     def calculate_fitness(self):
-        # Enhanced fitness calculation with route following, streak rewards, and movement incentives
-        base_fitness = 0
+        # Balanced fitness calculation focused on pathfinding and progress
         
-        # Time alive bonus
-        time_bonus = self.time_alive * 0.1
+        # 1. SURVIVAL REWARDS - Basic staying alive and moving
+        # Time alive bonus (small but steady)
+        time_bonus = self.time_alive * 0.05
         
-        # Distance traveled bonus - increased reward for movement
-        distance_bonus = self.distance_traveled * 0.7  # Increased from 0.5
+        # Distance traveled bonus (encourages movement)
+        distance_bonus = self.distance_traveled * 0.5
         
-        # Road staying bonus - big bonus for never going off road
+        # Road staying bonus (important for not crashing)
         road_bonus = 0
         if self.off_road_time == 0:
-            road_bonus = self.time_alive * 0.3  # Bigger bonus for staying on road
+            road_bonus = self.time_alive * 0.15  # Moderate bonus for staying on road
         
-        # Enhanced movement incentive system
-        avg_speed = self.distance_traveled / max(1, self.time_alive)
-        movement_bonus = 0
-        
-        # Reward consistent movement
-        if avg_speed > 1.0:  # Good average speed
-            movement_bonus += avg_speed * 50  # Reward for maintaining speed
-            
-        # Penalty for being stationary
-        stationary_penalty = self.total_stationary_time * 3  # Harsh penalty for cumulative stationary time
-        
-        # Enhanced checkpoint streak system
-        checkpoint_streak_bonus = 0
-        if self.checkpoint_streak > 0:
-            # Exponential bonus for longer streaks
-            streak_base = 100
-            streak_multiplier = min(self.checkpoint_streak ** 1.5, 20)  # Cap exponential growth
-            checkpoint_streak_bonus = streak_base * streak_multiplier
-            
-            # Additional bonus for max streak achieved
-            max_streak_bonus = self.max_checkpoint_streak * 75
-            checkpoint_streak_bonus += max_streak_bonus
-            
-        # Fast checkpoint streak bonus
-        fast_streak_bonus = 0
-        if self.consecutive_fast_checkpoints > 0:
-            # Bonus for consecutive fast checkpoints
-            fast_streak_bonus = (self.consecutive_fast_checkpoints ** 2) * 50  # Quadratic bonus
-            
-        # Time-to-checkpoint efficiency reward system
-        checkpoint_efficiency_bonus = 0
-        if self.checkpoint_times:
-            # Calculate average time per checkpoint
-            avg_checkpoint_time = sum(self.checkpoint_times) / len(self.checkpoint_times)
-            
-            # Reward faster checkpoint completion
-            ideal_checkpoint_time = 180  # 3 seconds at 60 FPS (adjust as needed)
-            if avg_checkpoint_time > 0:
-                time_efficiency = ideal_checkpoint_time / avg_checkpoint_time
-                # Bonus increases exponentially for faster times, but capped
-                checkpoint_efficiency_bonus = min(time_efficiency * 100, 300)
-                
-                # Additional bonus for consistent checkpoint times (low variance)
-                if len(self.checkpoint_times) > 1:
-                    time_variance = sum(abs(t - avg_checkpoint_time) for t in self.checkpoint_times) / len(self.checkpoint_times)
-                    consistency_bonus = max(0, (60 - time_variance) * 2)  # Reward consistent timing
-                    checkpoint_efficiency_bonus += consistency_bonus
-        
-        # Current checkpoint progress bonus - reward making progress toward current target
-        current_checkpoint_bonus = 0
-        if self.target_x is not None and self.target_y is not None:
-            time_on_current = self.time_alive - self.current_checkpoint_start_time
-            if time_on_current > 0:
-                # Bonus decreases over time to encourage faster completion
-                urgency_multiplier = max(0.1, 1.0 - (time_on_current / 600))  # Decrease over 10 seconds
-                distance_to_target = self.get_target_distance()
-                proximity_bonus = max(0, (100 - distance_to_target) / 100) * 50 * urgency_multiplier
-                current_checkpoint_bonus = proximity_bonus
-        
-        # Combine all speed and movement related bonuses
-        speed_bonus = movement_bonus + checkpoint_efficiency_bonus + current_checkpoint_bonus
-        
-        # Cap total speed bonus
-        speed_bonus = min(speed_bonus, 500)  # Increased cap
-        
-        # Pathfinding bonus - reward following calculated paths
+        # 2. PATHFINDING REWARDS - Main focus
         pathfinding_bonus = 0
         if self.path_waypoints:
-            # Bonus for progressing through waypoints
+            # Progress through path (linear scaling)
             waypoint_progress = self.current_waypoint_index / max(1, len(self.path_waypoints))
-            pathfinding_bonus += waypoint_progress * 300  # Big bonus for following path
+            pathfinding_bonus += waypoint_progress * 200  # Good bonus for following path
             
-            # Bonus for being close to current target
+            # Proximity to current target
             if self.target_x is not None and self.target_y is not None:
                 target_distance = self.get_target_distance()
-                proximity_bonus = max(0, (100 - target_distance) / 100) * 100
+                # Inverse distance bonus (closer = better)
+                proximity_bonus = max(0, (150 - target_distance) / 150) * 75
                 pathfinding_bonus += proximity_bonus
-                
-        # MASSIVE REWARD SYSTEM: Path Following Accuracy (The "Arrow Following" rewards)
-        path_following_rewards = 0
-        if hasattr(self, 'path_following_accuracy') and hasattr(self, 'path_deviation_history'):
-            # Current accuracy bonus (immediate reward for following predicted path)
-            accuracy_bonus = self.path_following_accuracy * 50  # Up to 50 points per frame
+        
+        # 3. CHECKPOINT REWARDS - Moderate but important
+        checkpoint_bonus = 0
+        if self.checkpoint_streak > 0:
+            # Linear bonus for checkpoint streaks (not exponential)
+            checkpoint_bonus = self.checkpoint_streak * 40
             
-            # Sustained accuracy bonus (massive rewards for consistent path following)
-            if len(self.path_deviation_history) >= 30:  # At least 0.5 seconds of data
+            # Small bonus for max streak achieved
+            checkpoint_bonus += self.max_checkpoint_streak * 20
+        
+        # Fast checkpoint completion bonus
+        fast_bonus = 0
+        if self.consecutive_fast_checkpoints > 0:
+            fast_bonus = self.consecutive_fast_checkpoints * 25  # Linear scaling
+        
+        # 4. PATH FOLLOWING ACCURACY - Moderate reward
+        accuracy_bonus = 0
+        if hasattr(self, 'path_following_accuracy'):
+            # Reward good path following
+            accuracy_bonus = self.path_following_accuracy * 30  # Per frame accuracy bonus
+            
+            # Sustained accuracy bonus (but not massive)
+            if hasattr(self, 'path_deviation_history') and len(self.path_deviation_history) >= 30:
+                recent_deviations = list(self.path_deviation_history)[-30:]
                 recent_accuracy = []
-                recent_deviations = list(self.path_deviation_history)[-30:]  # Last 30 frames
                 for deviation in recent_deviations:
                     frame_accuracy = max(0.0, 1.0 - (deviation / 50.0))
                     recent_accuracy.append(frame_accuracy)
                 
                 avg_recent_accuracy = sum(recent_accuracy) / len(recent_accuracy)
                 
-                # MASSIVE rewards for sustained high accuracy (this is the key "aggressive following")
-                if avg_recent_accuracy > 0.8:  # 80%+ accuracy
-                    sustained_bonus = (avg_recent_accuracy - 0.8) * 2500  # Up to 500 bonus per update
-                    path_following_rewards += sustained_bonus
-                elif avg_recent_accuracy > 0.6:  # 60-80% accuracy
-                    sustained_bonus = (avg_recent_accuracy - 0.6) * 1000  # Up to 200 bonus per update
-                    path_following_rewards += sustained_bonus
-                elif avg_recent_accuracy > 0.4:  # 40-60% accuracy
-                    sustained_bonus = (avg_recent_accuracy - 0.4) * 250  # Up to 50 bonus per update
-                    path_following_rewards += sustained_bonus
-                
-                # Exponential bonus for near-perfect path following
-                if avg_recent_accuracy > 0.9:
-                    perfect_bonus = ((avg_recent_accuracy - 0.9) * 10) ** 2 * 100  # Exponential scaling
-                    path_following_rewards += perfect_bonus
-            
-            # Prediction accuracy bonus (reward for following the 3-second lookahead)
-            if hasattr(self, 'predicted_path') and self.predicted_path:
-                prediction_bonus = accuracy_bonus * 2  # Double reward for following predictions
-                path_following_rewards += prediction_bonus
-            
-            # Add the accuracy bonus
-            path_following_rewards += accuracy_bonus
-                
-        # Massive bonus for reaching destination (saved state)
+                # Moderate sustained accuracy bonus
+                if avg_recent_accuracy > 0.7:  # 70%+ accuracy
+                    sustained_bonus = (avg_recent_accuracy - 0.7) * 150
+                    accuracy_bonus += sustained_bonus
+        
+        # 5. DESTINATION REWARD - Major achievement
         destination_bonus = 0
         if self.destination_reached or self.saved_state:
-            destination_bonus = 10000  # Huge bonus for reaching destination + time bonus
-            if self.time_alive < 600:
-                destination_bonus += (600 - self.time_alive) * 10
-
-        # Enhanced penalties
-        crash_penalty = 500 if self.crashed else 0  # Increased crash penalty
-        off_road_penalty = self.off_road_time * 7  # Increased off-road penalty
+            destination_bonus = 2000  # Significant but not overwhelming bonus
+            # Time bonus for reaching destination quickly
+            if self.time_alive < 1200:  # Within 20 seconds
+                destination_bonus += (1200 - self.time_alive) * 2
         
-        # Final fitness calculation with all bonuses and penalties
+        # 6. PENALTIES - Keep minimal
+        crash_penalty = 200 if self.crashed else 0  # Moderate crash penalty
+        off_road_penalty = self.off_road_time * 2  # Light off-road penalty
+        
+        # Final fitness calculation - clean and balanced
         self.fitness = (
-            time_bonus + distance_bonus + road_bonus + speed_bonus + 
-            checkpoint_streak_bonus + fast_streak_bonus + pathfinding_bonus + 
-            path_following_rewards + destination_bonus -
-            crash_penalty - off_road_penalty - stationary_penalty
+            time_bonus + distance_bonus + road_bonus + 
+            pathfinding_bonus + checkpoint_bonus + fast_bonus + 
+            accuracy_bonus + destination_bonus -
+            crash_penalty - off_road_penalty
         )
         
         return self.fitness
@@ -1255,7 +1332,7 @@ def create_car_from_data(car_data, road_system, pathfinder):
     return car
 
 
-def evolve_population(cars, population_size=population_size, road_system=None, pathfinder=None, shared_destination=None, generation=1):
+def evolve_population(cars, population_size=population_size, road_system=None, pathfinder=None, generation=1):
     # Calculate fitness for all cars
     for car in cars:
         car.calculate_fitness()
@@ -1270,32 +1347,7 @@ def evolve_population(cars, population_size=population_size, road_system=None, p
     generation_history.append(generation)
     saved_cars_history.append(saved_count)
     
-    # Generate new shared destination if needed or if many cars reached the current one
-    new_destination_needed = (shared_destination is None or saved_count >= population_size // 3)
-    
-    if new_destination_needed and pathfinder:
-        max_attempts = 10
-        valid_destination = None
-        
-        for attempt in range(max_attempts):
-            destination_node, test_destination = pathfinder.get_random_destination()
-            if destination_node and test_destination:
-                # Test if at least one spawn point can reach this destination
-                test_spawn_x, test_spawn_y, _ = road_system.get_random_spawn_point()
-                test_path = pathfinder.find_path(test_spawn_x, test_spawn_y, test_destination[0], test_destination[1])
-                
-                if test_path:
-                    valid_destination = test_destination
-                    print(f"New valid shared destination set at: {valid_destination} (attempt {attempt + 1})")
-                    break
-                else:
-                    print(f"Destination at {test_destination} is unreachable, trying again... (attempt {attempt + 1})")
-        
-        if valid_destination:
-            shared_destination = valid_destination
-        else:
-            print("WARNING: Could not find a reachable shared destination after 10 attempts!")
-            # Keep the old destination if we can't find a new one
+    # No need to generate shared destinations - each car handles its own individual destination
     
     # Keep top performers as elites, ensuring saved cars are prioritized
     elite_count = max(1, population_size // 5)
@@ -1315,10 +1367,6 @@ def evolve_population(cars, population_size=population_size, road_system=None, p
         new_car.time_alive = 0
         new_car.distance_traveled = 0
         new_car.off_road_time = 0
-        new_car.stationary_timer = 0
-        new_car.total_stationary_time = 0  # Reset cumulative stationary time
-        new_car.last_position = (spawn_x, spawn_y)
-        new_car.position_check_timer = 0
         new_car.checkpoint_times = []  # Reset checkpoint times
         new_car.last_checkpoint_time = 0  # Reset checkpoint timing
         new_car.current_checkpoint_start_time = 0  # Reset checkpoint start time
@@ -1328,9 +1376,8 @@ def evolve_population(cars, population_size=population_size, road_system=None, p
         new_car.pathfinder = pathfinder  # Ensure pathfinder is set
         new_car.destination_reached = False  # Reset destination status
         new_car.saved_state = False  # Reset saved state
-        new_car.shared_destination = shared_destination  # Set shared destination
-        if shared_destination:
-            new_car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
+        # Each car will generate its own individual destination
+        new_car.generate_individual_destination()  # Generate unique destination for this car
         new_cars.append(new_car)
     
     # Create offspring with mutations
@@ -1359,10 +1406,6 @@ def evolve_population(cars, population_size=population_size, road_system=None, p
         offspring.time_alive = 0
         offspring.distance_traveled = 0
         offspring.off_road_time = 0
-        offspring.stationary_timer = 0
-        offspring.total_stationary_time = 0  # Reset cumulative stationary time
-        offspring.last_position = (spawn_x, spawn_y)
-        offspring.position_check_timer = 0
         offspring.checkpoint_times = []  # Reset checkpoint times
         offspring.last_checkpoint_time = 0  # Reset checkpoint timing
         offspring.current_checkpoint_start_time = 0  # Reset checkpoint start time
@@ -1373,15 +1416,14 @@ def evolve_population(cars, population_size=population_size, road_system=None, p
         offspring.pathfinder = pathfinder  # Ensure pathfinder is set
         offspring.destination_reached = False  # Reset destination status
         offspring.saved_state = False  # Reset saved state
-        offspring.shared_destination = shared_destination  # Set shared destination
-        if shared_destination:
-            offspring.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
+        # Each car will generate its own individual destination
+        offspring.generate_individual_destination()  # Generate unique destination for this car
         new_cars.append(offspring)
     
     # Auto-save the population after evolution
     save_population(new_cars, generation)
     
-    return new_cars, shared_destination
+    return new_cars
 
 def draw_ai_controls(screen, car, x, y):
     """Draw AI control visualization showing what the AI is 'pressing'"""
@@ -1876,39 +1918,13 @@ else:
         car.angle = spawn_angle
         cars.append(car)
 
-# Generate the first shared destination with validation
-shared_destination = None
-if pathfinder:
-    print("Finding initial reachable shared destination...")
-    max_attempts = 10
-    
-    for attempt in range(max_attempts):
-        destination_node, test_destination = pathfinder.get_random_destination()
-        if destination_node and test_destination:
-            # Test if a spawn point can reach this destination
-            test_spawn_x, test_spawn_y, _ = road_system.get_random_spawn_point()
-            test_path = pathfinder.find_path(test_spawn_x, test_spawn_y, test_destination[0], test_destination[1])
-            
-            if test_path:
-                shared_destination = test_destination
-                print(f"Initial valid shared destination set at: {shared_destination}")
-                break
-            else:
-                print(f"Destination at {test_destination} is unreachable, trying again... (attempt {attempt + 1})")
-    
-    if not shared_destination:
-        print("WARNING: Could not find a reachable initial destination!")
-
-# Set up pathfinding for all cars
-for car in cars:
-    car.shared_destination = shared_destination
-    if shared_destination:
-        car.generate_path_to_destination(shared_destination)  # Generate individual path to shared destination
+# Each car generates its own individual destination automatically in the constructor
+print("Cars initialized with individual destinations...")
 
 evolution_timer = 0
-evolution_interval = 20 * FPS  # 20 seconds per generation
+evolution_interval = 40 * FPS  # 40 seconds per generation
 
-print("Starting AI cars with Dijkstra pathfinding evolution...")
+print("Starting AI cars with individual pathfinding evolution...")
 
 running = True
 while running:
@@ -1966,7 +1982,7 @@ while running:
     # Find best car and count alive cars (including saved cars)
     alive_cars = 0
     saved_cars = 0
-    best_car = None
+    best_car = None  # May be a saved (stationary) champion
     for car in cars:
         if not car.crashed or car.saved_state:
             if evolution_timer % 30 == 0:  # Update fitness occasionally
@@ -1976,10 +1992,19 @@ while running:
             alive_cars += 1
             if car.saved_state:
                 saved_cars += 1
+    # Choose an active (moving) best car for visualization (skip saved_state cars)
+    active_best_car = None
+    if best_car and not best_car.saved_state and not best_car.crashed:
+        active_best_car = best_car
+    else:
+        for c in cars:
+            if not c.crashed and not c.saved_state:
+                if active_best_car is None or c.fitness > active_best_car.fitness:
+                    active_best_car = c
     
-    # Camera follows best car
-    if best_car and not camera.manual_mode:
-        camera.follow_target(best_car.x, best_car.y)
+    # Camera follows active_best_car; if none, it won't auto-follow
+    if not camera.manual_mode and active_best_car:
+        camera.follow_target(active_best_car.x, active_best_car.y)
     camera.update(keys)
     
     # Draw roads
@@ -1992,22 +2017,25 @@ while running:
                 # Calculate predictive path and accuracy
                 if evolution_timer % 10 == 0:  # Update every 10 frames for performance
                     car.calculate_predictive_path()
-                    # Only calculate expensive AI prediction visualization for best car
-                    if car == best_car:
+                    # Only calculate expensive AI prediction visualization for active best (moving) car
+                    if car == active_best_car:
                         car.calculate_ai_predicted_path()  # Calculate what AI will actually do
                 car.update_path_following_accuracy()
-                
                 car.move(keys)
-            is_best = (car == best_car)
-            if (is_best or evolution_timer % 3 == 0) and not car.saved_state:
+            is_visualized = (car == active_best_car)
+            if (is_visualized or evolution_timer % 3 == 0) and not car.saved_state:
                 car.update_raycasts()
-            
-            car.draw(camera, is_best)
+            car.draw(camera, is_visualized)
     
-    # Evolution logic
+    # Evolution logic (also reset if only saved cars remain)
     evolution_timer += 1
-    if evolution_timer >= evolution_interval or alive_cars == 0:
-        cars, shared_destination = evolve_population(cars, population_size, road_system, pathfinder, shared_destination, generation)
+    unsaved_active_exists = any((not c.crashed) and (not c.saved_state) for c in cars)
+    saved_active_exists = any((not c.crashed) and c.saved_state for c in cars)
+    only_saved_remaining = (not unsaved_active_exists) and saved_active_exists
+    if evolution_timer >= evolution_interval or alive_cars == 0 or only_saved_remaining:
+        if only_saved_remaining:
+            print("All remaining cars are saved. Early reset/evolution triggered.")
+        cars = evolve_population(cars, population_size, road_system, pathfinder, generation)
         evolution_timer = 0
         generation += 1
         print(f"Generation {generation} started")
@@ -2039,7 +2067,7 @@ while running:
         screen.blit(streak_surface, streak_rect)
     
     # Display pathfinding info with performance stats
-    pathfinding_info = f"Pathfinding: {len(cars)} cars | Shared Destination: {shared_destination if shared_destination else 'None'}"
+    pathfinding_info = f"Pathfinding: {len(cars)} cars with individual destinations"
     pathfinding_surface = font.render(pathfinding_info, True, WHITE)
     pathfinding_rect = pathfinding_surface.get_rect()
     pathfinding_rect.topleft = (10, (streak_rect.bottom if best_car else text_rect.bottom) + 10)
@@ -2047,17 +2075,15 @@ while running:
     pygame.draw.rect(screen, (0, 0, 0, 128), pathfinding_rect.inflate(10, 5))
     screen.blit(pathfinding_surface, pathfinding_rect)
     
-    # Draw AI control visualization for best car
-    if best_car:
-        # Position in bottom right corner
+    # Draw AI control visualization for active (moving) best car
+    if active_best_car:
         control_x = WIDTH - 120
         control_y = HEIGHT - 150
-        draw_ai_controls(screen, best_car, control_x, control_y)
-        
-        # Draw neural network visualization in top right corner
+        draw_ai_controls(screen, active_best_car, control_x, control_y)
+        # Neural network visualization
         nn_x = WIDTH - 220
         nn_y = 50
-        draw_neural_network(screen, best_car, nn_x, nn_y)
+        draw_neural_network(screen, active_best_car, nn_x, nn_y)
     
     # Draw performance graph in bottom left corner
     graph_x = 20
