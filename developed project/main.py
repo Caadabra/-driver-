@@ -33,6 +33,24 @@ GRAY = (128, 128, 128)
 clock = pygame.time.Clock()
 FPS = 60
 
+# Waypoint spacing configuration (can be tuned without editing method bodies)
+WAYPOINT_SPACING_DEFAULT = 150  # pixels between resampled checkpoints
+WAYPOINT_MIN_SPACING = 100
+WAYPOINT_MAX_SPACING = 220
+TARGET_WAYPOINT_COUNT = 25  # Adaptive goal for long paths
+
+def compute_adaptive_waypoint_spacing(total_length):
+    """Derive spacing based on total path length aiming for TARGET_WAYPOINT_COUNT.
+    Clamped between min/max spacing. Falls back to default for short paths."""
+    if total_length <= 0:
+        return WAYPOINT_SPACING_DEFAULT
+    raw = total_length / TARGET_WAYPOINT_COUNT
+    if raw < WAYPOINT_MIN_SPACING:
+        return WAYPOINT_MIN_SPACING
+    if raw > WAYPOINT_MAX_SPACING:
+        return WAYPOINT_MAX_SPACING
+    return raw
+
 # Global variables for tracking statistics
 fitness_history = deque(maxlen=100)  # Keep last 100 generations
 generation_history = deque(maxlen=100)
@@ -149,31 +167,33 @@ class Car:
         if self.pathfinder:
             self.generate_individual_destination()
 
-    def _resample_waypoints_evenly(self, spacing=150):
-        """Resample current path_waypoints so checkpoints are evenly spaced along the path length.
-        Keeps the final destination. Spacing in pixels."""
+    def _resample_waypoints_evenly(self, spacing=None):
+        """Resample current path_waypoints so checkpoints are evenly spaced.
+        If spacing not provided, compute adaptively from total path length."""
         if not self.path_waypoints or len(self.path_waypoints) < 2:
             return
         pts = self.path_waypoints
-        # Compute cumulative distances
+        # Compute cumulative distances & cache geometry fundamentals
         dists = [0.0]
         for i in range(1, len(pts)):
             dx = pts[i][0] - pts[i-1][0]
             dy = pts[i][1] - pts[i-1][1]
             dists.append(dists[-1] + math.hypot(dx, dy))
         total = dists[-1]
+        if spacing is None:
+            spacing = compute_adaptive_waypoint_spacing(total)
         if total < spacing * 0.5:  # Too short to resample
+            # Still build geometry cache for original points
+            self._rebuild_path_geometry()
             return
         new_pts = [pts[0]]
         target = spacing
         seg_index = 1
         while target < total:
-            # Advance to segment containing target
             while seg_index < len(dists) and dists[seg_index] < target:
                 seg_index += 1
             if seg_index >= len(dists):
                 break
-            # Interpolate within segment
             prev_idx = seg_index - 1
             seg_len = dists[seg_index] - dists[prev_idx]
             if seg_len == 0:
@@ -184,10 +204,32 @@ class Car:
             y = pts[prev_idx][1] + (pts[seg_index][1] - pts[prev_idx][1]) * t
             new_pts.append((x, y))
             target += spacing
-        # Ensure final destination is included
         if new_pts[-1] != pts[-1]:
             new_pts.append(pts[-1])
         self.path_waypoints = new_pts
+        self._rebuild_path_geometry()
+
+    def _rebuild_path_geometry(self):
+        """Cache geometry for current path_waypoints: segment vectors, lengths, cumulative lengths, headings."""
+        self.path_segment_vectors = []  # (dx, dy)
+        self.path_segment_lengths = []
+        self.path_segment_headings = []  # radians
+        self.path_cumulative_lengths = [0.0]
+        pts = self.path_waypoints
+        if not pts or len(pts) < 2:
+            return
+        total = 0.0
+        for i in range(len(pts) - 1):
+            dx = pts[i+1][0] - pts[i][0]
+            dy = pts[i+1][1] - pts[i][1]
+            seg_len = math.hypot(dx, dy)
+            self.path_segment_vectors.append((dx, dy))
+            self.path_segment_lengths.append(seg_len)
+            heading = math.atan2(dx, -dy)  # Consistent with existing angle usage
+            self.path_segment_headings.append(heading)
+            total += seg_len
+            self.path_cumulative_lengths.append(total)
+        self.path_total_length = total
     
     def generate_individual_destination(self):
         """Generate a unique destination for this car"""
@@ -439,91 +481,61 @@ class Car:
         """Get the direction to the current target as an angle difference"""
         if self.target_x is None or self.target_y is None:
             return 0
-        
-        # Calculate angle to target
         dx = self.target_x - self.x
         dy = self.target_y - self.y
         target_angle = math.degrees(math.atan2(dx, -dy))
-        
-        # Calculate difference from current angle
         angle_diff = target_angle - self.angle
-        
-        # Normalize to [-180, 180]
         while angle_diff > 180:
             angle_diff -= 360
         while angle_diff < -180:
             angle_diff += 360
-        
         return angle_diff
-    
+
     def get_target_distance(self):
-        """Get the distance to the current target waypoint"""
+        """Return distance in pixels to current target waypoint or 0 if no target."""
         if self.target_x is None or self.target_y is None:
             return 0
-        
-        return math.sqrt((self.x - self.target_x)**2 + (self.y - self.target_y)**2)
-    
+        return math.hypot(self.target_x - self.x, self.target_y - self.y)
+
     def calculate_predictive_path(self):
-        """Calculate where the car should be in the next 3 seconds based on optimal path following"""
+        """Calculate where the car should be in the next 3 seconds based on optimal path following using cached geometry."""
         if not self.path_waypoints or self.current_waypoint_index >= len(self.path_waypoints):
             self.predicted_path = []
             return
-        
+        if not hasattr(self, 'path_segment_lengths') or len(self.path_segment_lengths) == 0:
+            self._rebuild_path_geometry()
         predicted_positions = []
         current_x, current_y = self.x, self.y
-        current_speed = max(1.5, abs(self.speed))  # Assume minimum reasonable speed
+        current_speed = max(1.5, abs(self.speed))
         waypoint_idx = self.current_waypoint_index
-        
-        # Simulate movement for prediction_horizon frames
-        for frame in range(0, self.prediction_horizon, 6):  # Sample every 6 frames for performance
+        for frame in range(0, self.prediction_horizon, 6):
             if waypoint_idx >= len(self.path_waypoints):
                 break
-                
             target_x, target_y = self.path_waypoints[waypoint_idx]
-            
-            # Calculate direction to current target
             dx = target_x - current_x
             dy = target_y - current_y
-            distance_to_target = math.sqrt(dx**2 + dy**2)
-            
-            if distance_to_target < 30:  # Close to waypoint, advance to next
+            distance_to_target = math.hypot(dx, dy)
+            if distance_to_target < 30:
                 waypoint_idx += 1
-                if waypoint_idx >= len(self.path_waypoints):
-                    break
-                target_x, target_y = self.path_waypoints[waypoint_idx]
-                dx = target_x - current_x
-                dy = target_y - current_y
-                distance_to_target = math.sqrt(dx**2 + dy**2)
-            
-            # Normalize direction
+                continue
             if distance_to_target > 0:
-                dx /= distance_to_target
-                dy /= distance_to_target
-            
-            # Calculate optimal speed based on upcoming path curvature
+                inv = 1.0 / distance_to_target
+                dx *= inv
+                dy *= inv
             optimal_speed = current_speed
-            if waypoint_idx + 1 < len(self.path_waypoints):
-                next_target_x, next_target_y = self.path_waypoints[waypoint_idx + 1]
-                
-                # Calculate turn angle
-                angle1 = math.atan2(target_x - current_x, -(target_y - current_y))
-                angle2 = math.atan2(next_target_x - target_x, -(next_target_y - target_y))
-                turn_angle = abs(angle2 - angle1)
+            if waypoint_idx < len(self.path_segment_headings) - 1:
+                h1 = self.path_segment_headings[waypoint_idx]
+                h2 = self.path_segment_headings[waypoint_idx + 1]
+                turn_angle = abs(h2 - h1)
                 if turn_angle > math.pi:
                     turn_angle = 2 * math.pi - turn_angle
-                
-                # Adjust speed for turns (slower for sharper turns)
-                if turn_angle > 0.3:  # Significant turn
+                if turn_angle > 0.3:
                     turn_factor = max(0.4, 1.0 - (turn_angle / math.pi))
                     optimal_speed = current_speed * turn_factor
-            
-            # Move towards target with optimal speed
-            move_distance = optimal_speed * 6  # 6 frames worth of movement
+            move_distance = optimal_speed * 6
             current_x += dx * move_distance
             current_y += dy * move_distance
-            
             predicted_positions.append((current_x, current_y))
-        
         self.predicted_path = predicted_positions
     
     def calculate_ai_predicted_path(self):
@@ -689,7 +701,7 @@ class Car:
             # Draw a glowing effect around saved cars
             pygame.draw.circle(screen, (255, 255, 0), (screen_x, screen_y), int(15 * camera.zoom), 2)
         
-        # Draw raycasts for best car
+        # Draw raycasts & route for best active car only
         if is_best:
             self.draw_raycasts(camera)
             self.draw_route(camera, is_best)
@@ -873,26 +885,7 @@ class Car:
             
             screen.blit(optimal_text, (legend_x, legend_y))
             screen.blit(ai_text, (legend_x, legend_y + 16))
-        screen_x, screen_y = camera.world_to_screen(self.x, self.y)
-        
-        if (screen_x < -50 or screen_x > camera.screen_width + 50 or 
-            screen_y < -50 or screen_y > camera.screen_height + 50):
-            return
-        
-        car_surface = pygame.Surface((self.width * camera.zoom, self.height * camera.zoom), pygame.SRCALPHA)
-        
-        if is_best:
-            car_surface.fill((255, 0, 0))  # Red for best car
-        else:
-            car_surface.fill(self.color)
-        
-        rotated_surface = pygame.transform.rotate(car_surface, -self.angle)
-        rotated_rect = rotated_surface.get_rect(center=(screen_x, screen_y))
-        screen.blit(rotated_surface, rotated_rect.topleft)
-        
-        # Draw raycasts for best car
-        if is_best:
-            self.draw_raycasts(camera)
+    # (Removed duplicate drawing block)
     
     def move(self, keys):
         # Skip movement if in saved state (destination reached)
