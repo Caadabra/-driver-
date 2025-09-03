@@ -194,6 +194,46 @@ class SpatialGrid:
         return segments
 
 class OSMRoadSystem:
+    def get_normalized_center_deviation(self, x, y):
+        """
+        Returns normalized deviation from road center:
+        -1 = far left edge, 0 = center, +1 = far right edge (relative to nearest segment).
+        If not on a road, returns 0.
+        """
+        nearest_seg = None
+        nearest_dist2 = float('inf')
+        nearest_center = None
+        for seg in self.road_segments:
+            sx, sy = seg.start; ex, ey = seg.end
+            dx = ex - sx; dy = ey - sy
+            seg_len2 = dx*dx + dy*dy
+            if seg_len2 <= 1e-6:
+                continue
+            t = ((x - sx)*dx + (y - sy)*dy)/seg_len2
+            t = max(0.0, min(1.0, t))
+            px = sx + dx * t; py = sy + dy * t
+            d2 = (px - x)**2 + (py - y)**2
+            if d2 < nearest_dist2:
+                nearest_dist2 = d2
+                nearest_seg = seg
+                nearest_center = (px, py)
+        if nearest_seg is None or nearest_center is None:
+            return 0.0
+        # Compute deviation: signed distance from center, normalized by half road width
+        px, py = nearest_center
+        seg_dx = nearest_seg.end[0] - nearest_seg.start[0]
+        seg_dy = nearest_seg.end[1] - nearest_seg.start[1]
+        seg_len = math.hypot(seg_dx, seg_dy)
+        if seg_len < 1e-6:
+            return 0.0
+        # Perpendicular vector to segment
+        perp_dx = -seg_dy / seg_len
+        perp_dy = seg_dx / seg_len
+        # Signed distance: positive = right of center, negative = left
+        deviation = (x - px) * perp_dx + (y - py) * perp_dy
+        half_width = max(1.0, nearest_seg.width / 2.0)
+        norm_dev = max(-1.0, min(1.0, deviation / half_width))
+        return norm_dev
     def __init__(self, center_lat=-36.902395416035674, center_lon=174.9444570937648, radius=1000):
         self.center_lat = center_lat
         self.center_lon = center_lon

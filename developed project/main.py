@@ -20,7 +20,7 @@ pygame.init()
 # Change this value to switch between modes:
 # - Mode 0 (Training): AI cars evolve and learn to drive
 # - Mode 1 (Destination): Click two points to see the best AI drive from start to destination
-mode = 0
+mode = 1
 
 population_size = 30
 
@@ -140,12 +140,10 @@ def create_destination_mode_car(start_pos, end_pos, road_system, pathfinder):
     return car
 
 class SimpleCarAI(nn.Module):
-    def __init__(self, input_size=28, hidden_size=96, output_size=4):  # output: accel, steer, brake, steer_sens
+    def __init__(self, input_size=11, hidden_size=32, output_size=2):  # output: accel, steer
         super(SimpleCarAI, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, output_size),
             nn.Tanh()
@@ -197,7 +195,7 @@ class Car:
 
         # AI network
         if self.use_ai:
-            self.ai = SimpleCarAI(input_size=28, hidden_size=96, output_size=4)
+            self.ai = SimpleCarAI(input_size=11, hidden_size=32, output_size=2)
             self.randomize_weights()
 
         # Control visualization
@@ -281,7 +279,7 @@ class Car:
         r = math.hypot(dx, dy)
         if r < 1e-6:
             return
-        self.angle = math.degrees(math.atan2(dx, -dy))
+        self.angle = math.degrees(math.atan2(dx, -dy)) - 180
 
     def _resample_waypoints_evenly(self, spacing=None):
         """Resample current path_waypoints so checkpoints are evenly spaced.
@@ -1125,244 +1123,46 @@ class Car:
             param.data.uniform_(-1, 1)
     
     def ai_move(self):
-        if len(self.raycast_distances) < 8:  # Updated for 8 raycasts
+        if len(self.raycast_distances) < 8:
             return
-        
-        # Prepare enhanced input data for better planning
+        # Minimal input: 8 raycast distances, speed, direction to next waypoint, and road center deviation
         inputs = []
-        
-        # 1. Raycast data (8 values) - normalized
         for distance in self.raycast_distances:
             inputs.append(distance / self.raycast_length)
-        
-        # 2. Speed (1 value) - normalized
         inputs.append(min(1.0, abs(self.speed) / 5.0))
-        
-        # 3. Current target direction (1 value) - normalized angle difference
+        # Direction to next waypoint
         target_direction = self.get_target_direction() / 180.0  # Normalize to [-1, 1]
         inputs.append(target_direction)
-        
-        # 4. Current target distance (1 value) - normalized
-        target_distance = min(1.0, self.get_target_distance() / 200.0)
-        inputs.append(target_distance)
-        
-        # 5. Velocity components (2 values) - normalized
-        velocity_x = math.sin(math.radians(self.angle)) * self.speed / 5.0
-        velocity_y = -math.cos(math.radians(self.angle)) * self.speed / 5.0
-        inputs.append(velocity_x)
-        inputs.append(velocity_y)
-        
-        # 6. Progress indicator (1 value) - how far through the path
-        if self.path_waypoints:
-            progress = self.current_waypoint_index / max(1, len(self.path_waypoints))
-        else:
-            progress = 0.0
-        inputs.append(progress)
-        
-        # 7. Next waypoint direction (1 value) - encourage looking ahead
-        next_waypoint_direction = 0.0
-        if self.path_waypoints and self.current_waypoint_index + 1 < len(self.path_waypoints):
-            next_x, next_y = self.path_waypoints[self.current_waypoint_index + 1]
-            dx = next_x - self.x
-            dy = next_y - self.y
-            next_angle = math.degrees(math.atan2(dx, -dy))
-            angle_diff = next_angle - self.angle
-            while angle_diff > 180:
-                angle_diff -= 360
-            while angle_diff < -180:
-                angle_diff += 360
-            next_waypoint_direction = angle_diff / 180.0
-        inputs.append(next_waypoint_direction)
-        
-        # 8. Path curvature ahead (1 value) - anticipate turns
-        path_curvature = 0.0
-        if (self.path_waypoints and self.current_waypoint_index + 2 < len(self.path_waypoints)):
-            # Calculate angle between current->next and next->after_next
-            curr_x, curr_y = self.path_waypoints[self.current_waypoint_index]
-            next_x, next_y = self.path_waypoints[self.current_waypoint_index + 1]
-            after_x, after_y = self.path_waypoints[self.current_waypoint_index + 2]
-            
-            angle1 = math.atan2(next_x - curr_x, -(next_y - curr_y))
-            angle2 = math.atan2(after_x - next_x, -(after_y - next_y))
-            curvature = abs(angle2 - angle1)
-            if curvature > math.pi:
-                curvature = 2 * math.pi - curvature
-            path_curvature = min(1.0, curvature / math.pi)  # Normalize to [0,1]
-        inputs.append(path_curvature)
-        
-        # 9. Path following accuracy (1 value) - how well following predicted path
-        inputs.append(self.path_following_accuracy)
-        
-        # 10. Average path deviation (1 value) - recent deviation from optimal path
-        if self.path_deviation_history:
-            avg_deviation = sum(list(self.path_deviation_history)[-10:]) / min(10, len(self.path_deviation_history))
-            normalized_deviation = min(1.0, avg_deviation / 50.0)  # Normalize with max 50 pixels
-        else:
-            normalized_deviation = 1.0  # High deviation if no history
-        inputs.append(normalized_deviation)
-        
-        # 11. Predicted direction (1 value) - where path leads in next 1 second
-        predicted_direction = 0.0
-        if self.predicted_path and len(self.predicted_path) > 10:
-            pred_idx = min(5, len(self.predicted_path) - 1)
-            entry = self.predicted_path[pred_idx]
-            if isinstance(entry, dict):
-                pred_x, pred_y = entry['pos']
-            else:
-                pred_x, pred_y = entry
-            dx = pred_x - self.x; dy = pred_y - self.y
-            pred_angle = math.degrees(math.atan2(dx, -dy))
-            angle_diff = pred_angle - self.angle
-            while angle_diff > 180:
-                angle_diff -= 360
-            while angle_diff < -180:
-                angle_diff += 360
-            predicted_direction = angle_diff / 180.0
-        inputs.append(predicted_direction)
-        
-        # 12. Lateral deviation
-        inputs.append(min(1.0, self.lateral_deviation / self.max_allowed_deviation))
-        # 13. Off-route time
-        inputs.append(min(1.0, self.off_route_frames / 300.0))
-        # 14. Relative progress speed
-        delta_progress = 0.0
-        if self.distance_along_path is not None and self.last_distance_along_path is not None:
-            delta_progress = max(0.0, self.distance_along_path - self.last_distance_along_path) / 50.0
-        inputs.append(min(1.0, delta_progress))
-        # 15. Reverse usage flag
-        inputs.append(1.0 if self.speed < -0.1 else 0.0)
-        # 16. Heading alignment (cosine similarity normalized)
-        heading_align = 0.0
-        if self.path_waypoints and self.current_waypoint_index < len(self.path_waypoints):
-            idx = max(0, self.current_waypoint_index - 1)
-            if idx < len(self.path_waypoints) - 1:
-                x1, y1 = self.path_waypoints[idx]
-                x2, y2 = self.path_waypoints[idx+1]
-                vx, vy = x2 - x1, y2 - y1
-                seg_heading = math.degrees(math.atan2(vx, -vy))
-                diff = math.radians(seg_heading - self.angle)
-                while diff > math.pi: diff -= 2*math.pi
-                while diff < -math.pi: diff += 2*math.pi
-                heading_align = math.cos(diff)
-        inputs.append((heading_align + 1)/2.0)
-        # 17-19: Destination relative vector & loop ratio
-        dest_dx_norm = 0.0; dest_dy_norm = 0.0; loop_ratio = 0.0
-        if self.individual_destination:
-            ddx = self.individual_destination[0] - self.x
-            ddy = self.individual_destination[1] - self.y
-            dest_dx_norm = max(-1.0, min(1.0, ddx / 500.0))
-            dest_dy_norm = max(-1.0, min(1.0, ddy / 500.0))
-        if self.distance_traveled > 20:
-            net_disp = math.hypot(self.x - self.spawn_pos[0], self.y - self.spawn_pos[1])
-            loop_ratio = max(0.0, min(1.0, net_disp / max(1.0, self.distance_traveled)))
-        inputs.append(dest_dx_norm)
-        inputs.append(dest_dy_norm)
-        inputs.append(loop_ratio)
-        # 20-23: Path preview next 2 instruction points (steer,speed normalized)
-        # Legacy compatibility: convert tuple list to dict instructions if needed
-        if self.predicted_path and isinstance(self.predicted_path[0], tuple):
-            default_speed = min(self.max_forward_speed, max(1.0, abs(self.speed)))
-            self.predicted_path = [
-                {'pos': (px, py), 'speed': default_speed, 'steer': 0.0, 'note': 'legacy'}
-                for (px, py) in self.predicted_path
-            ]
-        for j in range(2):
-            if j < len(self.predicted_path):
-                p = self.predicted_path[j]
-                if isinstance(p, dict):
-                    inputs.append(p.get('steer', 0.0))
-                    inputs.append(p.get('speed', 0.0) / self.max_forward_speed)
-                else:
-                    inputs.append(0.0); inputs.append(0.0)
-            else:
-                inputs.append(0.0); inputs.append(0.0)
-        # 24-25: Current instruction one-hot (turn, hard_turn)
-        current_note = (self.predicted_path[0]['note'] if self.predicted_path and isinstance(self.predicted_path[0], dict) else 'straight')
-        inputs.append(1.0 if current_note == 'turn' else 0.0)
-        inputs.append(1.0 if current_note == 'hard_turn' else 0.0)
-        # 26 steering density feature
-        steering_density = 0.0
-        if self.total_forward_distance > 5:
-            steering_density = min(1.0, (self.total_steering_abs / max(1.0, self.total_forward_distance)) / 2.5)
-        inputs.append(steering_density)
-        # 27 spare
-        inputs.append(0.0)
-        # Ensure exactly 28 inputs
-        while len(inputs) < 28:
+        # Road center deviation (normalized)
+        road_center_deviation = 0.0
+        if self.road_system:
+            road_center_deviation = self.road_system.get_normalized_center_deviation(self.x, self.y)
+        inputs.append(road_center_deviation)
+        # Ensure exactly 11 inputs
+        while len(inputs) < 11:
             inputs.append(0.0)
-        inputs = inputs[:28]
-        
-        # Convert to tensor
+        inputs = inputs[:11]
         input_tensor = torch.tensor(inputs, dtype=torch.float32)
-        
-        # Run AI
         with torch.no_grad():
             outputs = self.ai(input_tensor)
-        
-        # Extract control outputs: acceleration, steering, brake, steering sensitivity
+        # Only acceleration and steering
         acceleration = outputs[0].item()
         steering = outputs[1].item()
-        brake = outputs[2].item()
-        steer_sens_raw = outputs[3].item() if len(outputs) > 3 else 0.0
-        
-        # Map steering sensitivity raw (-1..1) to a gain range
-        # Low end ~ gentle (0.6), high end ~ aggressive (3.0). Curvature can modulate further.
-        base_gain = 0.6 + ( (steer_sens_raw + 1) * 0.5 ) * (3.0 - 0.6)  # linear map
-        # Optional curvature boost: if upcoming path curvature is high, allow slight amplification
-        curvature_boost = 1.0 + (inputs[8] if len(inputs) > 8 else 0.0) * 0.35  # inputs[8] is path_curvature feature
-        steering_gain = base_gain * curvature_boost
-        self.current_steering_gain = steering_gain
-        
-        # Store AI decisions for visualization
         self.ai_acceleration = acceleration
         self.ai_steering = steering
-        self.ai_brake = brake
-        self.ai_steer_sens = steer_sens_raw
+        # Apply acceleration
+        if acceleration > 0.01:
+            self.speed += acceleration * 0.25
+        elif acceleration < -0.01:
+            self.speed += acceleration * 0.25  # allow reverse if needed
+        # Apply steering
+        self.angle += steering * 10.0  # scale steering output
         
-        # Interpret outputs with explicit intent separation:
-        # accel_intent in [0,1]; brake_intent in [0,1]; reverse_intent in [0,1] derived from negative brake
-        accel_intent = max(0.0, acceleration)  # forward throttle only
-        light_brake_intent = max(0.0, brake)   # positive brake output
-        reverse_intent = max(0.0, -brake)      # use negative brake output as reverse request
-
-        # Apply forward acceleration
-        if accel_intent > 0.01:
-            self.speed += accel_intent * 0.25
-
-        # Apply braking (stronger than negative accel previously)
-        if light_brake_intent > 0.01:
-            self.speed -= light_brake_intent * 0.45
-
-        # Determine if reverse is allowed (only when stuck or recently stagnating/off-route)
-        allow_reverse = (
-            self.can_reverse and (
-                self.stagnation_frames > 90 or  # 1.5s near-stationary
-                self.off_route_frames > 90 or   # far off route
-                (self.get_target_distance() < 60 and abs(self.get_target_direction()) > 120)  # sharp turn near target
-            )
-        )
-
-        if reverse_intent > 0.1 and allow_reverse and self.speed < 1.0:
-            # Apply reverse throttle only if nearly stopped (prevents instant flip)
-            self.speed -= reverse_intent * 0.18
-        else:
-            # Ignore unintended reverse intents; treat as mild brake instead
-            if reverse_intent > 0.2 and self.speed > 0:
-                self.speed -= reverse_intent * 0.1
-
+        # Only acceleration and steering are used now; brake and steer_sens removed
         # Clamp speeds (prevent casual negative speeds)
         if self.speed > self.max_forward_speed: self.speed = self.max_forward_speed
-        if self.speed < 0 and not allow_reverse: self.speed = 0
         if self.speed < -self.max_reverse_speed: self.speed = -self.max_reverse_speed
-
-        # Only apply steering if car has some speed (realistic car physics)
-        if abs(self.speed) > 0.1:
-            # Smooth steering & apply dynamic gain
-            smoothed = 0.6 * self.prev_steering_output + 0.4 * steering
-            self.prev_steering_output = smoothed
-            dynamic_gain = getattr(self, 'current_steering_gain', 2.2)
-            self.angle += smoothed * dynamic_gain * (abs(self.speed) / max(0.1, self.max_forward_speed))
-            self.total_steering_abs += abs(smoothed)
+        # Steering is now applied directly above; smoothing and dynamic gain removed for simplicity
 
     def calculate_fitness(self):
         # Balanced fitness calculation focused on pathfinding and progress (with anti-loop)
