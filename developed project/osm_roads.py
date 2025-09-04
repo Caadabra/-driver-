@@ -366,16 +366,40 @@ class OSMRoadSystem:
 
         # Post-process: intersections & stops
         self.intersections = []
+        self.roundabouts = []
         self.stop_node_positions = []
         for nid, count in node_usage.items():
             if count >= 3 and nid in nodes:
                 nd = nodes[nid]
                 x, y = self.latlon_to_pixel(nd['lat'], nd['lon'])
                 self.intersections.append((x, y))
+        
+        # Identify roundabouts from OSM data
+        for element in data.get('elements', []):
+            if element.get('type') == 'way':
+                tags = element.get('tags', {}) or {}
+                if tags.get('junction') == 'roundabout':
+                    node_ids = element.get('nodes', [])
+                    if len(node_ids) >= 4:  # Valid roundabout
+                        # Calculate center point
+                        points = []
+                        for nid in node_ids:
+                            nd = nodes.get(nid)
+                            if nd:
+                                x, y = self.latlon_to_pixel(nd['lat'], nd['lon'])
+                                points.append((x, y))
+                        if len(points) >= 4:
+                            # Calculate centroid
+                            cx = sum(p[0] for p in points) / len(points)
+                            cy = sum(p[1] for p in points) / len(points)
+                            # Calculate average radius
+                            radius = sum(math.hypot(p[0] - cx, p[1] - cy) for p in points) / len(points)
+                            self.roundabouts.append((cx, cy, radius))
+        
         for nid, nd in stop_nodes.items():
             x, y = self.latlon_to_pixel(nd['lat'], nd['lon'])
             self.stop_node_positions.append((x, y))
-        print(f"Loaded {len(self.road_segments)} road segments from OSM")
+        print(f"Loaded {len(self.road_segments)} road segments, {len(self.roundabouts)} roundabouts from OSM")
 
     def snap_point_to_road_center(self, x: float, y: float) -> tuple[float, float]:
         """Return nearest point on any road segment centerline (start->end) to (x,y)."""
@@ -442,7 +466,17 @@ class OSMRoadSystem:
             segment = RoadSegment((x, -400), (x, 400), road_width, lane_count=2)
             self.road_segments.append(segment)
         
-        print(f"Created {len(self.road_segments)} fallback road segments")
+        # Initialize intersection and roundabout lists for fallback
+        self.intersections = []
+        self.roundabouts = []
+        self.stop_node_positions = []
+        
+        # Create intersections at grid crossings
+        for x in range(-600, 601, grid_size):
+            for y in range(-400, 401, grid_size):
+                self.intersections.append((x, y))
+        
+        print(f"Created {len(self.road_segments)} fallback road segments with {len(self.intersections)} intersections")
     
     def _create_spatial_grid(self):
         """Create spatial grid for efficient collision detection"""
@@ -529,7 +563,7 @@ class OSMRoadSystem:
         return max_distance
     
     def draw_roads(self, screen, camera_x, camera_y, screen_width, screen_height, zoom=1.0):
-        """Draw roads relative to camera position with improved rendering"""
+        """Draw roads with realistic rendering, proper blending, and no overlaps"""
         if not self.road_segments:
             return
 
@@ -548,6 +582,354 @@ class OSMRoadSystem:
             seg_bottom = max(segment.start[1], segment.end[1]) + segment.width
             if (seg_right >= left and seg_left <= right and seg_bottom >= top and seg_top <= bottom):
                 visible_segments.append(segment)
+
+        # First pass: Draw road bases (asphalt) with shoulders
+        for segment in visible_segments:
+            self._draw_road_base(screen, segment, camera_x, camera_y, screen_width, screen_height, zoom)
+        
+        # Second pass: Draw roundabouts and intersections
+        self._draw_intersections_and_roundabouts(screen, camera_x, camera_y, screen_width, screen_height, zoom)
+        
+        # Third pass: Draw lane markings and details
+        for segment in visible_segments:
+            self._draw_road_markings(screen, segment, camera_x, camera_y, screen_width, screen_height, zoom)
+
+    def _draw_road_base(self, screen, segment, camera_x, camera_y, screen_width, screen_height, zoom):
+        """Draw the base asphalt layer with shoulders"""
+        start_screen = (
+            int((segment.start[0] - camera_x) * zoom + screen_width // 2),
+            int((segment.start[1] - camera_y) * zoom + screen_height // 2)
+        )
+        end_screen = (
+            int((segment.end[0] - camera_x) * zoom + screen_width // 2),
+            int((segment.end[1] - camera_y) * zoom + screen_height // 2)
+        )
+        
+        road_width = max(1, int(segment.width * zoom))
+        shoulder_width = max(1, int((segment.width + 16) * zoom))  # Add shoulder
+        
+        # Draw shoulder (dirt/grass edge)
+        pygame.draw.line(screen, (90, 120, 70), start_screen, end_screen, shoulder_width + 8)
+        
+        # Draw road base (dark asphalt)
+        pygame.draw.line(screen, (45, 45, 50), start_screen, end_screen, road_width + 4)
+        
+        # Draw main road surface (lighter asphalt)
+        pygame.draw.line(screen, (65, 65, 70), start_screen, end_screen, road_width)
+
+    def _draw_road_markings(self, screen, segment, camera_x, camera_y, screen_width, screen_height, zoom):
+        """Draw lane markings, centerlines, and directional arrows"""
+        start_screen = (
+            int((segment.start[0] - camera_x) * zoom + screen_width // 2),
+            int((segment.start[1] - camera_y) * zoom + screen_height // 2)
+        )
+        end_screen = (
+            int((segment.end[0] - camera_x) * zoom + screen_width // 2),
+            int((segment.end[1] - camera_y) * zoom + screen_height // 2)
+        )
+        
+        line_width_px = max(1, int(LINE_WIDTH_M * segment.width * 0.02 * zoom))
+        yellow_line_width_px = max(1, int(YELLOW_LINE_WIDTH_M * segment.width * 0.025 * zoom))
+        
+        # Draw edge lines (white solid)
+        self._draw_edge_lines(screen, segment, start_screen, end_screen, zoom, line_width_px)
+        
+        # Draw center line and lane dividers
+        self._draw_center_and_lane_lines(screen, segment, start_screen, end_screen, zoom, line_width_px, yellow_line_width_px)
+        
+        # Draw directional arrows if road is long enough
+        if segment.length * zoom > 80:
+            self._draw_directional_arrows(screen, segment, start_screen, end_screen, zoom)
+
+    def _draw_edge_lines(self, screen, segment, start_screen, end_screen, zoom, line_width):
+        """Draw white edge lines on road shoulders"""
+        road_width = segment.width * zoom
+        half_width = road_width / 2 - 4  # Inset from edge
+        
+        # Calculate perpendicular offset
+        dx = end_screen[0] - start_screen[0]
+        dy = end_screen[1] - start_screen[1]
+        length = math.hypot(dx, dy)
+        if length == 0:
+            return
+        
+        perp_x = -dy / length * half_width
+        perp_y = dx / length * half_width
+        
+        # Left edge line
+        left_start = (start_screen[0] + perp_x, start_screen[1] + perp_y)
+        left_end = (end_screen[0] + perp_x, end_screen[1] + perp_y)
+        pygame.draw.line(screen, (255, 255, 255), left_start, left_end, line_width)
+        
+        # Right edge line
+        right_start = (start_screen[0] - perp_x, start_screen[1] - perp_y)
+        right_end = (end_screen[0] - perp_x, end_screen[1] - perp_y)
+        pygame.draw.line(screen, (255, 255, 255), right_start, right_end, line_width)
+
+    def _draw_center_and_lane_lines(self, screen, segment, start_screen, end_screen, zoom, line_width, yellow_line_width):
+        """Draw center lines and lane dividers"""
+        if segment.lane_count <= 1:
+            return
+            
+        road_width = segment.width * zoom
+        lane_width = road_width / segment.lane_count
+        
+        # Calculate perpendicular vector
+        dx = end_screen[0] - start_screen[0]
+        dy = end_screen[1] - start_screen[1]
+        length = math.hypot(dx, dy)
+        if length == 0:
+            return
+        
+        perp_x = -dy / length
+        perp_y = dx / length
+        
+        # Draw center line (yellow) for two-way roads
+        if not segment.oneway and segment.lanes_forward > 0 and segment.lanes_backward > 0:
+            center_offset = 0
+            center_start = (start_screen[0] + perp_x * center_offset, start_screen[1] + perp_y * center_offset)
+            center_end = (end_screen[0] + perp_x * center_offset, end_screen[1] + perp_y * center_offset)
+            
+            # Solid yellow for no passing zones, dashed for passing allowed
+            if segment.lanes_forward == 1 and segment.lanes_backward == 1:
+                self._draw_dashed_line(screen, (255, 235, 59), center_start, center_end, yellow_line_width)
+            else:
+                pygame.draw.line(screen, (255, 235, 59), center_start, center_end, yellow_line_width)
+        
+        # Draw lane dividers (white dashed)
+        for i in range(1, segment.lane_count):
+            offset = -road_width / 2 + i * lane_width
+            # Skip center line area for two-way roads
+            if not segment.oneway and abs(offset) < lane_width * 0.3:
+                continue
+                
+            line_start = (start_screen[0] + perp_x * offset, start_screen[1] + perp_y * offset)
+            line_end = (end_screen[0] + perp_x * offset, end_screen[1] + perp_y * offset)
+            self._draw_dashed_line(screen, (255, 255, 255), line_start, line_end, line_width)
+
+    def _draw_dashed_line(self, surface, color, start_pos, end_pos, width=1, dash_length=None, gap_length=None):
+        """Draw a dashed line with realistic proportions"""
+        if dash_length is None:
+            dash_length = max(8, int(DASH_LENGTH_M * 2))
+        if gap_length is None:
+            gap_length = max(8, int(GAP_LENGTH_M * 2))
+            
+        x1, y1 = start_pos
+        x2, y2 = end_pos
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.hypot(dx, dy)
+        if length <= 0:
+            return
+            
+        pattern_len = dash_length + gap_length
+        dist = 0.0
+        while dist < length:
+            seg_end = min(dist + dash_length, length)
+            sx = x1 + dx * (dist / length)
+            sy = y1 + dy * (dist / length)
+            ex = x1 + dx * (seg_end / length)
+            ey = y1 + dy * (seg_end / length)
+            pygame.draw.line(surface, color, (int(sx), int(sy)), (int(ex), int(ey)), width)
+            dist += pattern_len
+
+    def _draw_directional_arrows(self, screen, segment, start_screen, end_screen, zoom):
+        """Draw directional arrows on lanes"""
+        if not hasattr(segment, 'lane_turns') or not segment.lane_turns:
+            return
+            
+        road_width = segment.width * zoom
+        lane_width = road_width / segment.lane_count
+        arrow_length = max(12, int(20 * zoom))
+        arrow_width = max(8, int(12 * zoom))
+        
+        # Calculate road direction
+        dx = end_screen[0] - start_screen[0]
+        dy = end_screen[1] - start_screen[1]
+        length = math.hypot(dx, dy)
+        if length == 0:
+            return
+            
+        road_angle = math.atan2(dy, dx)
+        perp_x = -dy / length
+        perp_y = dx / length
+        
+        # Draw arrows at 1/3 and 2/3 along the road
+        for t in [0.33, 0.66]:
+            arrow_x = start_screen[0] + dx * t
+            arrow_y = start_screen[1] + dy * t
+            
+            for lane_idx in range(min(len(segment.lane_turns), segment.lane_count)):
+                lane_offset = -road_width / 2 + (lane_idx + 0.5) * lane_width
+                ax = arrow_x + perp_x * lane_offset
+                ay = arrow_y + perp_y * lane_offset
+                
+                # Determine arrow direction
+                directions = segment.lane_turns[lane_idx] if segment.lane_turns[lane_idx] else ['through']
+                for direction in directions[:1]:  # Only show primary direction
+                    if direction.startswith('left'):
+                        arrow_angle = road_angle - math.pi / 2
+                    elif direction.startswith('right'):
+                        arrow_angle = road_angle + math.pi / 2
+                    else:  # through, straight, etc.
+                        arrow_angle = road_angle
+                    
+                    self._draw_arrow(screen, (ax, ay), arrow_angle, arrow_length, arrow_width)
+
+    def _draw_arrow(self, screen, center, angle, length, width):
+        """Draw a single directional arrow"""
+        cx, cy = center
+        
+        # Arrow tip
+        tip_x = cx + math.cos(angle) * length
+        tip_y = cy + math.sin(angle) * length
+        
+        # Arrow base corners
+        base_angle1 = angle + math.pi - 0.5
+        base_angle2 = angle + math.pi + 0.5
+        base_length = length * 0.7
+        
+        base1_x = cx + math.cos(base_angle1) * base_length
+        base1_y = cy + math.sin(base_angle1) * base_length
+        base2_x = cx + math.cos(base_angle2) * base_length
+        base2_y = cy + math.sin(base_angle2) * base_length
+        
+        # Arrow shaft
+        shaft_length = length * 0.4
+        shaft_x = cx - math.cos(angle) * shaft_length
+        shaft_y = cy - math.sin(angle) * shaft_length
+        
+        points = [
+            (int(tip_x), int(tip_y)),
+            (int(base1_x), int(base1_y)),
+            (int(shaft_x), int(shaft_y)),
+            (int(base2_x), int(base2_y))
+        ]
+        
+        pygame.draw.polygon(screen, (255, 255, 255), points)
+
+    def _draw_intersections_and_roundabouts(self, screen, camera_x, camera_y, screen_width, screen_height, zoom):
+        """Draw intersection blending and roundabouts"""
+        # Draw detected roundabouts first
+        if hasattr(self, 'roundabouts'):
+            for cx, cy, radius in self.roundabouts:
+                # Check if roundabout is visible
+                view_width = screen_width / zoom
+                view_height = screen_height / zoom
+                left = camera_x - view_width // 2
+                right = camera_x + view_width // 2
+                top = camera_y - view_height // 2
+                bottom = camera_y + view_height // 2
+                
+                if (cx < left-radius or cx > right+radius or cy < top-radius or cy > bottom+radius):
+                    continue
+                    
+                sx = int((cx - camera_x) * zoom + screen_width // 2)
+                sy = int((cy - camera_y) * zoom + screen_height // 2)
+                radius_px = max(8, int(radius * zoom))
+                
+                self._draw_roundabout(screen, sx, sy, radius_px)
+        
+        # Draw regular intersections
+        if not hasattr(self, 'intersections'):
+            return
+            
+        radius_px = max(8, int(INTERSECTION_RADIUS_M * self.scale_factor * zoom))
+        
+        for ix, iy in self.intersections:
+            # Skip if this is part of a roundabout
+            is_roundabout = False
+            if hasattr(self, 'roundabouts'):
+                for cx, cy, r in self.roundabouts:
+                    if math.hypot(ix - cx, iy - cy) < r + 20:  # 20 pixel tolerance
+                        is_roundabout = True
+                        break
+            
+            if is_roundabout:
+                continue
+                
+            # Check if intersection is visible
+            view_width = screen_width / zoom
+            view_height = screen_height / zoom
+            left = camera_x - view_width // 2
+            right = camera_x + view_width // 2
+            top = camera_y - view_height // 2
+            bottom = camera_y + view_height // 2
+            
+            if (ix < left-100 or ix > right+100 or iy < top-100 or iy > bottom+100):
+                continue
+                
+            sx = int((ix - camera_x) * zoom + screen_width // 2)
+            sy = int((iy - camera_y) * zoom + screen_height // 2)
+            
+            # Check if this should be a roundabout (4+ connecting roads)
+            connecting_roads = self._count_connecting_roads(ix, iy)
+            
+            if connecting_roads >= 4 and radius_px > 15:
+                self._draw_roundabout(screen, sx, sy, radius_px)
+            else:
+                self._draw_intersection(screen, sx, sy, radius_px)
+
+    def _count_connecting_roads(self, x, y, threshold=50):
+        """Count roads connecting to an intersection point"""
+        count = 0
+        for segment in self.road_segments:
+            start_dist = math.hypot(segment.start[0] - x, segment.start[1] - y)
+            end_dist = math.hypot(segment.end[0] - x, segment.end[1] - y)
+            if start_dist < threshold or end_dist < threshold:
+                count += 1
+        return count
+
+    def _draw_roundabout(self, screen, cx, cy, radius):
+        """Draw a proper roundabout"""
+        # Outer circle (grass/landscape)
+        pygame.draw.circle(screen, (80, 120, 60), (cx, cy), int(radius * 1.8))
+        
+        # Road surface (circular)
+        pygame.draw.circle(screen, (65, 65, 70), (cx, cy), radius)
+        
+        # Inner circle (island)
+        inner_radius = max(4, int(radius * 0.4))
+        pygame.draw.circle(screen, (90, 140, 70), (cx, cy), inner_radius)
+        
+        # White circle markings
+        pygame.draw.circle(screen, (255, 255, 255), (cx, cy), radius, 2)
+        pygame.draw.circle(screen, (255, 255, 255), (cx, cy), inner_radius, 2)
+
+    def _draw_intersection(self, screen, cx, cy, radius):
+        """Draw a standard intersection with blended edges"""
+        # Smooth circular blend for intersection
+        pygame.draw.circle(screen, (70, 70, 75), (cx, cy), radius)
+        
+        # Crosswalk markings if intersection is large enough
+        if radius > 12:
+            self._draw_crosswalk_markings(screen, cx, cy, radius)
+
+    def _draw_crosswalk_markings(self, screen, cx, cy, radius):
+        """Draw crosswalk stripes at intersection"""
+        stripe_width = 3
+        stripe_spacing = 6
+        crosswalk_width = radius * 1.2
+        
+        # Draw crosswalks in four directions
+        for angle in [0, math.pi/2, math.pi, 3*math.pi/2]:
+            start_x = cx + math.cos(angle) * radius * 0.8
+            start_y = cy + math.sin(angle) * radius * 0.8
+            end_x = cx + math.cos(angle) * radius * 1.4
+            end_y = cy + math.sin(angle) * radius * 1.4
+            
+            # Draw zebra stripes
+            perp_angle = angle + math.pi/2
+            for i in range(-3, 4):
+                offset = i * stripe_spacing
+                stripe_start_x = start_x + math.cos(perp_angle) * offset
+                stripe_start_y = start_y + math.sin(perp_angle) * offset
+                stripe_end_x = end_x + math.cos(perp_angle) * offset
+                stripe_end_y = end_y + math.sin(perp_angle) * offset
+                
+                pygame.draw.line(screen, (255, 255, 255), 
+                               (int(stripe_start_x), int(stripe_start_y)), 
+                               (int(stripe_end_x), int(stripe_end_y)), stripe_width)
 
         def draw_dashed_line(surface, color, start_pos, end_pos, width=1, dash_length=12, gap_length=12):
             x1, y1 = start_pos
@@ -568,103 +950,6 @@ class OSMRoadSystem:
                 pygame.draw.line(surface, color, (int(sx), int(sy)), (int(ex), int(ey)), width)
                 dist += pattern_len
 
-        line_width_px = max(1, int(LINE_WIDTH_M * self.scale_factor * zoom))
-        yellow_line_width_px = max(1, int(YELLOW_LINE_WIDTH_M * self.scale_factor * zoom))
-        dash_len_px = max(2, int(DASH_LENGTH_M * self.scale_factor * zoom))
-        gap_len_px = max(2, int(GAP_LENGTH_M * self.scale_factor * zoom))
-        arrow_length_px = int(ARROW_LENGTH_M * self.scale_factor * zoom)
-        arrow_width_px = int(ARROW_WIDTH_M * self.scale_factor * zoom)
-        stop_line_thickness_px = max(2, int(STOP_LINE_WIDTH_M * self.scale_factor * zoom))
-
-        for segment in visible_segments:
-            start_screen = (
-                int((segment.start[0] - camera_x) * zoom + screen_width // 2),
-                int((segment.start[1] - camera_y) * zoom + screen_height // 2)
-            )
-            end_screen = (
-                int((segment.end[0] - camera_x) * zoom + screen_width // 2),
-                int((segment.end[1] - camera_y) * zoom + screen_height // 2)
-            )
-            road_width = max(1, int(segment.width * zoom))
-            if road_width <= 0:
-                continue
-            pygame.draw.line(screen, (50, 50, 50), start_screen, end_screen, road_width)
-            center_width = max(1, int(road_width * 0.8))
-            pygame.draw.line(screen, (80, 80, 80), start_screen, end_screen, center_width)
-
-            if getattr(segment, 'lane_markings', None):
-                for mark in segment.lane_markings:
-                    offset = mark['offset'] * zoom
-                    sx = start_screen[0] + int(segment.normal[0] * offset)
-                    sy = start_screen[1] + int(segment.normal[1] * offset)
-                    ex = end_screen[0] + int(segment.normal[0] * offset)
-                    ey = end_screen[1] + int(segment.normal[1] * offset)
-                    is_center = abs(mark['offset']) < 1e-3
-                    width_px = yellow_line_width_px if (is_center and not segment.oneway and segment.lanes_forward and segment.lanes_backward) else line_width_px
-                    if mark['dashed']:
-                        draw_dashed_line(screen, mark['color'], (sx, sy), (ex, ey), width=width_px, dash_length=dash_len_px, gap_length=gap_len_px)
-                    else:
-                        pygame.draw.line(screen, mark['color'], (sx, sy), (ex, ey), width_px)
-
-            if getattr(segment, 'lane_turns', None) and segment.length * zoom > arrow_length_px * 2:
-                lane_width_px = (segment.width * zoom) / segment.lane_count
-                anchor_factors = [0.6, 0.75]
-                for lane_index, directions in enumerate(segment.lane_turns[:segment.lane_count]):
-                    lane_center_offset = (-segment.width / 2 + (lane_index + 0.5) * (segment.width / segment.lane_count)) * zoom
-                    for idx_dir, direction in enumerate(directions[:len(anchor_factors)]):
-                        t = anchor_factors[idx_dir]
-                        ax = start_screen[0] + (end_screen[0] - start_screen[0]) * t + int(segment.normal[0] * lane_center_offset)
-                        ay = start_screen[1] + (end_screen[1] - start_screen[1]) * t + int(segment.normal[1] * lane_center_offset)
-                        base_dir_angle = math.atan2(end_screen[1] - start_screen[1], end_screen[0] - start_screen[0])
-                        if direction.startswith('left'):
-                            arrow_angle = base_dir_angle - math.pi / 2
-                        elif direction.startswith('right'):
-                            arrow_angle = base_dir_angle + math.pi / 2
-                        elif direction in ('merge_to_left', 'slight_left'):
-                            arrow_angle = base_dir_angle - math.pi / 3
-                        elif direction in ('merge_to_right', 'slight_right'):
-                            arrow_angle = base_dir_angle + math.pi / 3
-                        else:
-                            arrow_angle = base_dir_angle
-                        length = arrow_length_px
-                        half_w = max(2, arrow_width_px // 2)
-                        tip = (ax + math.cos(arrow_angle) * length, ay + math.sin(arrow_angle) * length)
-                        left_pt = (ax + math.cos(arrow_angle + math.pi/2) * half_w, ay + math.sin(arrow_angle + math.pi/2) * half_w)
-                        right_pt = (ax + math.cos(arrow_angle - math.pi/2) * half_w, ay + math.sin(arrow_angle - math.pi/2) * half_w)
-                        back = (ax - math.cos(arrow_angle) * length * 0.3, ay - math.sin(arrow_angle) * length * 0.3)
-                        poly = [tip, left_pt, back, right_pt]
-                        pygame.draw.polygon(screen, (220, 220, 220), [(int(px), int(py)) for px, py in poly])
-
-            if getattr(self, 'stop_node_positions', None):
-                end_world = segment.end
-                for sxw, syw in self.stop_node_positions:
-                    if (end_world[0]-sxw)**2 + (end_world[1]-syw)**2 < (segment.width * 0.6)**2:
-                        offset_back = 1.5 * self.scale_factor * zoom
-                        dir_vec = (end_screen[0]-start_screen[0], end_screen[1]-start_screen[1])
-                        length_vec = math.hypot(*dir_vec) or 1
-                        ux, uy = dir_vec[0]/length_vec, dir_vec[1]/length_vec
-                        cx = end_screen[0] - ux * offset_back
-                        cy = end_screen[1] - uy * offset_back
-                        px_v, py_v = -uy, ux
-                        half_w = (segment.width * zoom) / 2 * 0.9
-                        p1 = (int(cx + px_v * half_w), int(cy + py_v * half_w))
-                        p2 = (int(cx - px_v * half_w), int(cy - py_v * half_w))
-                        pygame.draw.line(screen, (255,255,255), p1, p2, stop_line_thickness_px)
-                        if zoom > 0.5:
-                            font = pygame.font.Font(None, max(14, int(18*zoom)))
-                            txt = font.render('STOP', True, (255,255,255))
-                            rect = txt.get_rect(center=(cx, cy - 10*zoom))
-                            screen.blit(txt, rect)
-
-        if hasattr(self, 'intersections'):
-            radius_px = max(2, int(INTERSECTION_RADIUS_M * self.scale_factor * zoom))
-            for ix, iy in self.intersections:
-                if (ix < left-100 or ix > right+100 or iy < top-100 or iy > bottom+100):
-                    continue
-                sx = int((ix - camera_x) * zoom + screen_width // 2)
-                sy = int((iy - camera_y) * zoom + screen_height // 2)
-                pygame.draw.circle(screen, (90, 90, 90), (sx, sy), radius_px)
-    
     def get_road_bounds(self):
         """Get the bounds of all roads for camera limits"""
         if not self.road_segments:

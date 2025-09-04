@@ -37,7 +37,7 @@ YELLOW = (255, 255, 0)
 GRAY = (128, 128, 128)
 
 clock = pygame.time.Clock()
-FPS = 60
+FPS = 120
 
 # Waypoint spacing configuration (can be tuned without editing method bodies)
 WAYPOINT_SPACING_DEFAULT = 150  # pixels between resampled checkpoints
@@ -201,7 +201,8 @@ class Car:
         # Control visualization
         self.ai_acceleration = 0
         self.ai_steering = 0
-        self.ai_brake = 0
+        # self.ai_brake = 0  # Removed - no longer used
+        # self.ai_steer_sens = 0  # Removed - no longer used
 
         # Motion constraints (reverse support)
         self.can_reverse = True
@@ -231,8 +232,7 @@ class Car:
         self.target_x = None
         self.target_y = None
         self.destination_node = None
-        self.pathfinding_timer = 0
-        self.pathfinding_interval = 300
+        # pathfinding_timer and pathfinding_interval removed - no more path recalculation
         self.destination_reached = False
         self.saved_state = False
         self.individual_destination = None
@@ -724,33 +724,7 @@ class Car:
         if is_best:
             self.draw_raycasts(camera)
             self.draw_route(camera, is_best)
-            # Visualize dynamic steering sensitivity
-            try:
-                gain = getattr(self, 'current_steering_gain', None)
-                raw = getattr(self, 'ai_steer_sens', None)
-                if gain is not None and raw is not None:
-                    # Draw a small horizontal bar above the car indicating gain within range
-                    min_g, max_g = 0.6, 3.0
-                    norm = (gain - min_g) / (max_g - min_g)
-                    bar_w = 50 * camera.zoom
-                    bar_h = 6 * camera.zoom
-                    bar_x = screen_x - bar_w/2
-                    bar_y = screen_y - (self.height * camera.zoom)/2 - 12 * camera.zoom
-                    pygame.draw.rect(screen, (40,40,40), (bar_x, bar_y, bar_w, bar_h), 1)
-                    inner_w = max(2, bar_w * max(0.0, min(1.0, norm)))
-                    color = (int(255*norm), int(255*(1-norm)), 60)  # green->red
-                    pygame.draw.rect(screen, color, (bar_x+1, bar_y+1, inner_w-2, bar_h-2))
-                    # Numeric text (gain)
-                    try:
-                        fnt = globals().get('font_small')
-                        if fnt is None:
-                            fnt = pygame.font.SysFont('Arial', max(10, int(10*camera.zoom)))
-                        txt = fnt.render(f"sens {gain:.2f}", True, WHITE)
-                        screen.blit(txt, (bar_x, bar_y - 12*camera.zoom))
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            # Steering sensitivity visualization removed
     
     def draw_route(self, camera, is_best=False):
         """Draw the pathfinding route waypoints and current target"""
@@ -962,30 +936,7 @@ class Car:
             else:
                 self.frames_since_waypoint_advance += 1
             
-            # More conservative path recalculation to prevent exploitation
-            self.pathfinding_timer += 1
-            if self.pathfinding_timer >= self.pathfinding_interval:
-                self.pathfinding_timer = 0
-                if self.pathfinder and not self.destination_reached and self.individual_destination:
-                    # Only recalculate if we're far from destination AND making poor progress
-                    current_dest_distance = math.sqrt(
-                        (self.x - self.individual_destination[0])**2 + (self.y - self.individual_destination[1])**2
-                    )
-                    time_since_path = self.time_alive - self.path_generation_time
-                    
-                    # Conditions for path recalculation:
-                    # 1. Far from destination (>200 pixels)
-                    # 2. Have been using current path for a while (>10 seconds)
-                    # 3. Have many waypoints left (>5)
-                    should_recalculate = (
-                        current_dest_distance > 200 and
-                        time_since_path > 600 and  # 10 seconds
-                        len(self.path_waypoints) - self.current_waypoint_index > 5
-                    )
-                    
-                    if should_recalculate:
-                        print(f"Car recalculating path: dist={current_dest_distance:.1f}, time_since={time_since_path}, waypoints_left={len(self.path_waypoints) - self.current_waypoint_index}")
-                        self.generate_new_path_to_individual_destination()
+            # Path recalculation disabled to prevent disrupting good paths
         
         # Track distance for AI
         if self.use_ai:
@@ -1630,380 +1581,420 @@ def assign_shared_destination(cars, pathfinder, min_distance=400, max_attempts=1
             print(f"assign_shared_destination: car failed to get path: {e}")
     return dest
 
-def draw_ai_controls(screen, car, x, y):
-    """Draw AI control visualization showing what the AI is 'pressing'"""
-    if not car or not car.use_ai:
-        return
-    
-    # Colors
-    inactive_color = (100, 100, 100)  # Gray
-    active_color = (255, 255, 0)      # Yellow
-    brake_color = (255, 0, 0)         # Red
-    
-    # Arrow key size and spacing
-    key_size = 40
-    spacing = 10
-    
-    # Calculate colors based on AI outputs (mutually exclusive)
-    # Determine which action is being taken based on priority
-    if abs(car.ai_brake) > abs(car.ai_acceleration) and car.ai_brake > 0.1:
-        # Braking takes priority
-        up_color = inactive_color
-        down_color = brake_color
-    elif car.ai_acceleration > 0.1:
-        # Accelerating
-        up_color = active_color
-        down_color = inactive_color
-    elif car.ai_acceleration < -0.1:
-        # Negative acceleration (light braking)
-        up_color = inactive_color
-        down_color = (255, 100, 0)  # Orange for light braking
-    else:
-        # Neither accelerating nor braking significantly
-        up_color = inactive_color
-        down_color = inactive_color
-    
-    left_color = active_color if car.ai_steering < -0.1 else inactive_color
-    right_color = active_color if car.ai_steering > 0.1 else inactive_color
-    
-    # Draw arrow keys layout
-    # Up arrow (acceleration)
-    up_points = [
-        (x + key_size//2, y),
-        (x, y + key_size//2),
-        (x + key_size//4, y + key_size//2),
-        (x + key_size//4, y + key_size),
-        (x + 3*key_size//4, y + key_size),
-        (x + 3*key_size//4, y + key_size//2),
-        (x + key_size, y + key_size//2)
-    ]
-    pygame.draw.polygon(screen, up_color, up_points)
-    pygame.draw.polygon(screen, WHITE, up_points, 2)
-    
-    # Down arrow (brake)
-    down_y = y + key_size + spacing
-    down_points = [
-        (x + key_size//2, down_y + key_size),
-        (x, down_y + key_size//2),
-        (x + key_size//4, down_y + key_size//2),
-        (x + key_size//4, down_y),
-        (x + 3*key_size//4, down_y),
-        (x + 3*key_size//4, down_y + key_size//2),
-        (x + key_size, down_y + key_size//2)
-    ]
-    pygame.draw.polygon(screen, down_color, down_points)
-    pygame.draw.polygon(screen, WHITE, down_points, 2)
-    
-    # Left arrow (steer left)
-    left_x = x - key_size - spacing
-    left_y = y + key_size//2 + spacing//2
-    left_points = [
-        (left_x, left_y + key_size//2),
-        (left_x + key_size//2, left_y),
-        (left_x + key_size//2, left_y + key_size//4),
-        (left_x + key_size, left_y + key_size//4),
-        (left_x + key_size, left_y + 3*key_size//4),
-        (left_x + key_size//2, left_y + 3*key_size//4),
-        (left_x + key_size//2, left_y + key_size)
-    ]
-    pygame.draw.polygon(screen, left_color, left_points)
-    pygame.draw.polygon(screen, WHITE, left_points, 2)
-    
-    # Right arrow (steer right)
-    right_x = x + key_size + spacing
-    right_y = y + key_size//2 + spacing//2
-    right_points = [
-        (right_x + key_size, right_y + key_size//2),
-        (right_x + key_size//2, right_y),
-        (right_x + key_size//2, right_y + key_size//4),
-        (right_x, right_y + key_size//4),
-        (right_x, right_y + 3*key_size//4),
-        (right_x + key_size//2, right_y + 3*key_size//4),
-        (right_x + key_size//2, right_y + key_size)
-    ]
-    pygame.draw.polygon(screen, right_color, right_points)
-    pygame.draw.polygon(screen, WHITE, right_points, 2)
-    
-    # Add labels
-    font = pygame.font.Font(None, 24)
-    
-    # Acceleration value
-    if car.ai_acceleration > 0.01:
-        acc_text = f"ACC: {car.ai_acceleration:.2f}"
-        acc_surface = font.render(acc_text, True, WHITE)
-        screen.blit(acc_surface, (x - 20, y - 30))
-    
-    # Brake value
-    if car.ai_brake > 0.01:
-        brake_text = f"BRAKE: {car.ai_brake:.2f}"
-        brake_surface = font.render(brake_text, True, WHITE)
-        screen.blit(brake_surface, (x - 20, down_y + key_size + 10))
-    
-    # Steering value
-    if abs(car.ai_steering) > 0.01:
-        steer_text = f"STEER: {car.ai_steering:.2f}"
-        steer_surface = font.render(steer_text, True, WHITE)
-        screen.blit(steer_surface, (x - 40, y + key_size*2 + spacing + 20))
-    
-    # Speed display
-    speed_text = f"SPEED: {car.speed:.2f}"
-    speed_surface = font.render(speed_text, True, WHITE)
-    screen.blit(speed_surface, (x - 20, y - 60))
+# Modern AI Visualization System
+class ModernHUD:
+    def __init__(self):
+        self.font_large = pygame.font.Font(None, 28)
+        self.font_medium = pygame.font.Font(None, 20)
+        self.font_small = pygame.font.Font(None, 16)
+        self.font_mono = pygame.font.SysFont('Consolas', 14)
 
-def draw_neural_network(screen, car, x, y, width=200, height=150):
-    """Draw a visualization of the neural network in the top right corner"""
-    if not car or not car.use_ai:
-        return
-    
-    # Background
-    nn_rect = pygame.Rect(x, y, width, height)
-    pygame.draw.rect(screen, (20, 20, 20, 180), nn_rect)
-    pygame.draw.rect(screen, WHITE, nn_rect, 2)
-    
-    # Network architecture: input(28) -> hidden(96) -> hidden(96) -> output(3)
-    input_size = 28
-    hidden_size = 96
-    output_size = 3
-    
-    # Layer positions
-    input_x = x + 20
-    hidden1_x = x + width * 0.4
-    hidden2_x = x + width * 0.6
-    output_x = x + width - 40
-    
-    # Node spacing
-    input_spacing = height / (input_size + 1)
-    hidden_spacing = height / 9  # Show 8 nodes + dots indicator
-    output_spacing = height / (output_size + 1)
-    
-    # Get current network activations
-    try:
-        with torch.no_grad():
-            # Prepare inputs (same as in ai_move) - 28 inputs total (map + path features + instructions)
-            inputs = []
-            
-            # 1. Raycast distances (8 values)
-            for distance in car.raycast_distances:
-                inputs.append(distance / car.raycast_length)
-            
-            # 2. Speed (1 value)
-            inputs.append(min(1.0, abs(car.speed) / 5.0))
-            
-            # 3. Current target direction (1 value)
-            target_direction = car.get_target_direction() / 180.0
-            inputs.append(target_direction)
-            
-            # 4. Current target distance (1 value)
-            target_distance = min(1.0, car.get_target_distance() / 200.0)
-            inputs.append(target_distance)
-            
-            # 5. Velocity components (2 values)
-            velocity_x = math.sin(math.radians(car.angle)) * car.speed / 5.0
-            velocity_y = -math.cos(math.radians(car.angle)) * car.speed / 5.0
-            inputs.append(velocity_x)
-            inputs.append(velocity_y)
-            
-            # 6. Progress indicator (1 value)
-            if car.path_waypoints:
-                progress = car.current_waypoint_index / max(1, len(car.path_waypoints))
+        # Colors
+        self.colors = {
+            'bg_dark': (20, 20, 25, 220),
+            'bg_medium': (30, 30, 35, 200),
+            'bg_light': (40, 40, 45, 180),
+            'accent': (0, 255, 200),
+            'accent_dim': (0, 180, 140),
+            'success': (0, 255, 100),
+            'warning': (255, 200, 0),
+            'error': (255, 80, 80),
+            'text_primary': (240, 240, 245),
+            'text_secondary': (180, 180, 185),
+            'text_dim': (120, 120, 125),
+            'border': (60, 60, 70),
+            'border_highlight': (100, 100, 110)
+        }
+
+        # Panel positions and sizes
+        self.panels = {
+            'ai_status': {'x': 20, 'y': 20, 'w': 280, 'h': 200},
+            'performance': {'x': 20, 'y': 240, 'w': 280, 'h': 180},
+            'debug': {'x': 20, 'y': 440, 'w': 280, 'h': 200},
+            'minimap': {'x': 320, 'y': 20, 'w': 200, 'h': 200},
+            'network': {'x': 540, 'y': 20, 'w': 200, 'h': 200},
+            'controls': {'x': 20, 'y': 660, 'w': 280, 'h': 100}
+        }
+
+    def draw_rounded_rect(self, surface, color, rect, radius=8, border_color=None, border_width=1):
+        """Draw a rounded rectangle"""
+        x, y, w, h = rect
+
+        # Draw main rectangle (simplified - no rounded corners for compatibility)
+        pygame.draw.rect(surface, color, rect)
+
+        # Draw border if specified
+        if border_color:
+            pygame.draw.rect(surface, border_color, rect, border_width)
+
+    def draw_panel(self, surface, title, panel_rect, content_func):
+        """Draw a modern panel with title and content"""
+        # Extract rect values from panel dictionary
+        if isinstance(panel_rect, dict):
+            rect = (panel_rect['x'], panel_rect['y'], panel_rect['w'], panel_rect['h'])
+        else:
+            rect = panel_rect
+
+        # Panel background
+        self.draw_rounded_rect(surface, self.colors['bg_dark'], rect, border_color=self.colors['border'])
+
+        # Title bar
+        title_rect = (rect[0], rect[1], rect[2], 30)
+        self.draw_rounded_rect(surface, self.colors['bg_medium'], title_rect, radius=6)
+
+        # Title text
+        title_surf = self.font_medium.render(title, True, self.colors['text_primary'])
+        surface.blit(title_surf, (rect[0] + 12, rect[1] + 6))
+
+        # Content area
+        content_rect = (rect[0] + 8, rect[1] + 35, rect[2] - 16, rect[3] - 43)
+        content_func(surface, content_rect)
+
+    def draw_ai_status_panel(self, surface, rect, car):
+        """Draw AI status and decision visualization"""
+        y_offset = rect[1]
+
+        # Current decisions
+        decisions = [
+            ("Acceleration", car.ai_acceleration if hasattr(car, 'ai_acceleration') else 0, -1, 1),
+            ("Steering", car.ai_steering if hasattr(car, 'ai_steering') else 0, -1, 1),
+            ("Speed", car.speed, -4, 4)
+        ]
+
+        for label, value, min_val, max_val in decisions:
+            # Label
+            label_surf = self.font_small.render(label, True, self.colors['text_secondary'])
+            surface.blit(label_surf, (rect[0], y_offset))
+
+            # Progress bar background
+            bar_rect = (rect[0] + 80, y_offset, 120, 16)
+            self.draw_rounded_rect(surface, self.colors['bg_medium'], bar_rect, radius=4)
+
+            # Progress bar fill
+            normalized = (value - min_val) / (max_val - min_val)
+            fill_width = max(0, min(120, int(120 * abs(normalized))))
+            fill_color = self.colors['success'] if value >= 0 else self.colors['error']
+
+            if normalized >= 0:
+                fill_rect = (rect[0] + 80, y_offset, fill_width, 16)
             else:
-                progress = 0.0
-            inputs.append(progress)
-            
-            # 7. Next waypoint direction (1 value)
-            next_waypoint_direction = 0.0
-            if car.path_waypoints and car.current_waypoint_index + 1 < len(car.path_waypoints):
-                next_x, next_y = car.path_waypoints[car.current_waypoint_index + 1]
-                dx = next_x - car.x
-                dy = next_y - car.y
-                next_angle = math.degrees(math.atan2(dx, -dy))
-                angle_diff = next_angle - car.angle
-                while angle_diff > 180:
-                    angle_diff -= 360
-                while angle_diff < -180:
-                    angle_diff += 360
-                next_waypoint_direction = angle_diff / 180.0
-            inputs.append(next_waypoint_direction)
-            
-            # 8. Path curvature ahead (1 value)
-            path_curvature = 0.0
-            if (car.path_waypoints and car.current_waypoint_index + 2 < len(car.path_waypoints)):
-                curr_x, curr_y = car.path_waypoints[car.current_waypoint_index]
-                next_x, next_y = car.path_waypoints[car.current_waypoint_index + 1]
-                after_x, after_y = car.path_waypoints[car.current_waypoint_index + 2]
-                
-                angle1 = math.atan2(next_x - curr_x, -(next_y - curr_y))
-                angle2 = math.atan2(after_x - next_x, -(after_y - next_y))
-                curvature = abs(angle2 - angle1)
-                if curvature > math.pi:
-                    curvature = 2 * math.pi - curvature
-                path_curvature = min(1.0, curvature / math.pi)  # Normalize to [0,1]
-            inputs.append(path_curvature)
-            
-            # 9. Path following accuracy (1 value)
-            inputs.append(car.path_following_accuracy if hasattr(car, 'path_following_accuracy') else 0.0)
-            
-            # Add map-derived extra features placeholders (not recomputing heavy calcs here)
-            inputs.append(min(1.0, car.lateral_deviation / car.max_allowed_deviation))
-            inputs.append(min(1.0, car.off_route_frames / 300.0))
-            inputs.append(0.0)  # delta progress placeholder
-            inputs.append(1.0 if car.speed < -0.1 else 0.0)
-            inputs.append(0.5)  # heading alignment approx
-            # Path preview
-            for j in range(3):
-                if j < len(car.predicted_path):
-                    p = car.predicted_path[j]
-                    inputs.append(p['steer'])
-                    inputs.append(p['speed'] / car.max_forward_speed)
-                else:
-                    inputs.append(0.0); inputs.append(0.0)
-            current_note = car.predicted_path[0]['note'] if car.predicted_path else 'straight'
-            inputs.append(1.0 if current_note == 'turn' else 0.0)
-            inputs.append(1.0 if current_note == 'hard_turn' else 0.0)
-            inputs.append(0.0)  # spare
-            while len(inputs) < 28:
-                inputs.append(0.0)
-            inputs = inputs[:28]
-            
-            input_tensor = torch.tensor(inputs, dtype=torch.float32)
-            
-            # Get layer outputs
-            layer1 = car.ai.network[0](input_tensor)  # First linear layer
-            layer1_activated = car.ai.network[1](layer1)  # ReLU
-            layer2 = car.ai.network[2](layer1_activated)  # Second linear layer  
-            layer2_activated = car.ai.network[3](layer2)  # ReLU
-            outputs = car.ai.network[4](layer2_activated)  # Output layer
-            final_outputs = car.ai.network[5](outputs)  # Tanh
-            
-    except Exception as e:
-        # If we can't get activations, just draw the structure
-        inputs = [0.5] * input_size
-        layer1_activated = torch.zeros(hidden_size)
-        layer2_activated = torch.zeros(hidden_size)
-        final_outputs = torch.zeros(output_size)
-    
-    # Draw input layer
-    input_labels = ["Ray1", "Ray2", "Ray3", "Ray4", "Ray5", "Ray6", "Ray7", "Ray8", 
-                   "Speed", "TargetDir", "TargetDist", "VelX", "VelY", "Progress", 
-                   "NextWP", "Curvature", "PathAcc"]
-    for i in range(input_size):
-        node_y = y + (i + 1) * input_spacing
-        activation = inputs[i] if i < len(inputs) else 0
-        
-        # Color based on activation
-        intensity = max(0, min(255, int(abs(activation) * 255)))
-        color = (intensity, intensity, intensity) if activation >= 0 else (intensity, 0, 0)
-        
-        pygame.draw.circle(screen, color, (input_x, int(node_y)), 6)
-        pygame.draw.circle(screen, WHITE, (input_x, int(node_y)), 6, 1)
-        
-        # Label
-        if i < len(input_labels):
-            font = pygame.font.Font(None, 16)
-            label = font.render(input_labels[i], True, WHITE)
-            screen.blit(label, (input_x - 30, int(node_y) - 8))
-    
-    # Draw hidden layers (show subset of nodes)
-    for layer_idx, (layer_x, activations) in enumerate([(hidden1_x, layer1_activated), (hidden2_x, layer2_activated)]):
-        for i in range(min(8, len(activations))):  # Show first 8 nodes to represent 64
-            node_y = y + (i + 1) * hidden_spacing
-            activation = activations[i].item() if i < len(activations) else 0
-            
-            # Color based on activation
-            intensity = max(0, min(255, int(abs(activation) * 255)))
-            color = (0, intensity, 0) if activation >= 0 else (intensity, 0, 0)
-            
-            pygame.draw.circle(screen, color, (int(layer_x), int(node_y)), 4)
-            pygame.draw.circle(screen, WHITE, (int(layer_x), int(node_y)), 4, 1)
-        
-        # Add "..." indicator to show there are more nodes
-        if len(activations) > 8:
-            dots_y = y + (9) * hidden_spacing
-            font = pygame.font.Font(None, 16)
-            dots_text = font.render("...", True, WHITE)
-            text_rect = dots_text.get_rect(center=(int(layer_x), int(dots_y)))
-            screen.blit(dots_text, text_rect)
-    
-    # Draw output layer
-    output_labels = ["Accel", "Steer", "Brake"]
-    for i in range(output_size):
-        node_y = y + (i + 1) * output_spacing
-        activation = final_outputs[i].item() if i < len(final_outputs) else 0
-        
-        # Color based on activation
-        intensity = max(0, min(255, int(abs(activation) * 255)))
-        color = (0, 0, intensity) if activation >= 0 else (intensity, 0, 0)
-        
-        pygame.draw.circle(screen, color, (output_x, int(node_y)), 8)
-        pygame.draw.circle(screen, WHITE, (output_x, int(node_y)), 8, 1)
-        
-        # Label and value
-        font = pygame.font.Font(None, 16)
-        label = font.render(f"{output_labels[i]}: {activation:.2f}", True, WHITE)
-        screen.blit(label, (output_x + 15, int(node_y) - 8))
-    
-    # Draw connections (simplified - show representative connections)
-    # Input to first hidden layer - show connections from each input to a few hidden nodes
-    for i in range(input_size):
-        start_y = y + (i + 1) * input_spacing
-        for j in range(min(3, 8)):  # Connect to first 3 visible hidden nodes
-            end_y = y + (j + 1) * hidden_spacing
-            # Use a subtle gray color for connections
-            pygame.draw.line(screen, (60, 60, 60), 
-                           (input_x + 6, int(start_y)), 
-                           (int(hidden1_x) - 4, int(end_y)), 1)
-    
-    # First hidden layer to second hidden layer
-    for i in range(min(5, 8)):  # Show connections from first 5 visible nodes
-        start_y = y + (i + 1) * hidden_spacing
-        for j in range(min(5, 8)):  # To first 5 visible nodes in second layer
-            end_y = y + (j + 1) * hidden_spacing
-            pygame.draw.line(screen, (60, 60, 60), 
-                           (int(hidden1_x) + 4, int(start_y)), 
-                           (int(hidden2_x) - 4, int(end_y)), 1)
-    
-    # Second hidden layer to output
-    for i in range(min(5, 8)):  # Show connections from first 5 visible hidden nodes
-        start_y = y + (i + 1) * hidden_spacing
-        for j in range(output_size):  # To all output nodes
-            end_y = y + (j + 1) * output_spacing
-            pygame.draw.line(screen, (60, 60, 60), 
-                           (int(hidden2_x) + 4, int(start_y)), 
-                           (output_x - 8, int(end_y)), 1)
-    
-    # Title
-    title_font = pygame.font.Font(None, 24)
-    title = title_font.render("Neural Network", True, WHITE)
-    screen.blit(title, (x + 5, y - 25))
-    
-    # Checkpoint timing information display
-    timing_info_font = pygame.font.Font(None, 16)
-    
-    if hasattr(car, 'checkpoint_times') and len(car.checkpoint_times) > 0:
-        avg_checkpoint_time = sum(car.checkpoint_times) / len(car.checkpoint_times)
-        avg_time_text = timing_info_font.render(f"Avg Checkpoint Time: {avg_checkpoint_time:.1f}f", True, WHITE)
-        screen.blit(avg_time_text, (x + 5, y + height + 25))
-        
-        last_checkpoint_text = timing_info_font.render(f"Last Checkpoint: {car.checkpoint_times[-1]:.1f}f", True, WHITE)
-        screen.blit(last_checkpoint_text, (x + 5, y + height + 40))
-    
-    # Current checkpoint progress
-    if car.target_x is not None and car.target_y is not None:
-        time_on_current = car.time_alive - car.current_checkpoint_start_time
-        current_progress_text = timing_info_font.render(f"Current Checkpoint: {time_on_current}f", True, WHITE)
-        screen.blit(current_progress_text, (x + 5, y + height + 55))
-    
-    # Layer labels
-    label_font = pygame.font.Font(None, 14)
-    input_label = label_font.render("Input", True, WHITE)
-    hidden1_label = label_font.render("Hidden1", True, WHITE)
-    hidden2_label = label_font.render("Hidden2", True, WHITE)
-    output_label = label_font.render("Output", True, WHITE)
-    
-    screen.blit(input_label, (input_x - 20, y + height + 5))
-    screen.blit(hidden1_label, (int(hidden1_x) - 25, y + height + 5))
-    screen.blit(hidden2_label, (int(hidden2_x) - 25, y + height + 5))
-    screen.blit(output_label, (output_x - 20, y + height + 5))
+                fill_rect = (rect[0] + 80 + 120 - fill_width, y_offset, fill_width, 16)
+
+            self.draw_rounded_rect(surface, fill_color, fill_rect, radius=4)
+
+            # Value text
+            value_text = f"{value:.2f}"
+            value_surf = self.font_small.render(value_text, True, self.colors['text_primary'])
+            surface.blit(value_surf, (rect[0] + 210, y_offset))
+
+            y_offset += 22
+
+        # Target direction indicator
+        target_dir = car.get_target_direction() if hasattr(car, 'get_target_direction') else 0
+        compass_surf = self.font_small.render("Target Direction", True, self.colors['text_secondary'])
+        surface.blit(compass_surf, (rect[0], y_offset))
+
+        # Compass visualization
+        compass_center = (rect[0] + 60, y_offset + 25)
+        pygame.draw.circle(surface, self.colors['bg_medium'], compass_center, 20)
+        pygame.draw.circle(surface, self.colors['border'], compass_center, 20, 2)
+
+        # Direction indicator
+        angle_rad = math.radians(car.angle + target_dir * 180)
+        indicator_x = compass_center[0] + 15 * math.sin(angle_rad)
+        indicator_y = compass_center[1] - 15 * math.cos(angle_rad)
+        pygame.draw.line(surface, self.colors['accent'], compass_center, (indicator_x, indicator_y), 3)
+
+    def draw_performance_panel(self, surface, rect, generation, best_fitness, avg_fitness, cars_alive):
+        """Draw performance metrics"""
+        y_offset = rect[1]
+
+        metrics = [
+            ("Generation", generation, "text_primary"),
+            ("Best Fitness", best_fitness, "text_primary"),
+            ("Avg Fitness", avg_fitness, "text_primary"),
+            ("Cars Alive", cars_alive, "text_primary")
+        ]
+
+        for i, (label, value, color_key) in enumerate(metrics):
+            label_surf = self.font_small.render(label, True, self.colors['text_secondary'])
+            surface.blit(label_surf, (rect[0], y_offset))
+
+            # Format fitness values
+            if "Fitness" in label:
+                display_value = ".1f"
+            else:
+                display_value = str(value)
+
+            value_surf = self.font_small.render(display_value, True, self.colors[color_key])
+            surface.blit(value_surf, (rect[0] + 120, y_offset))
+
+            y_offset += 20
+
+        # Progress bar for generation
+        if hasattr(self, 'generation_progress'):
+            progress = min(1.0, self.generation_progress)
+            bar_rect = (rect[0], y_offset, rect[2], 8)
+            self.draw_rounded_rect(surface, self.colors['bg_medium'], bar_rect, radius=4)
+
+            fill_rect = (rect[0], y_offset, int(rect[2] * progress), 8)
+            self.draw_rounded_rect(surface, self.colors['accent'], fill_rect, radius=4)
+
+    def draw_debug_panel(self, surface, rect, car):
+        """Draw debug information"""
+        y_offset = rect[1]
+
+        # Raycast visualization
+        ray_surf = self.font_small.render("Raycasts", True, self.colors['text_secondary'])
+        surface.blit(ray_surf, (rect[0], y_offset))
+        y_offset += 18
+
+        if hasattr(car, 'raycast_distances') and car.raycast_distances:
+            # Show raycast bars
+            for i, distance in enumerate(car.raycast_distances[:8]):
+                bar_y = y_offset + i * 12
+                bar_rect = (rect[0], bar_y, 60, 8)
+                self.draw_rounded_rect(surface, self.colors['bg_medium'], bar_rect, radius=2)
+
+                # Fill based on distance
+                normalized = min(1.0, distance / (car.raycast_length if hasattr(car, 'raycast_length') else 100))
+                fill_width = int(60 * (1 - normalized))  # Closer = more filled
+                fill_rect = (rect[0], bar_y, fill_width, 8)
+                fill_color = self.colors['error'] if normalized < 0.3 else self.colors['warning'] if normalized < 0.7 else self.colors['success']
+                self.draw_rounded_rect(surface, fill_color, fill_rect, radius=2)
+
+                # Distance text
+                dist_text = f"{distance:.0f}"
+                dist_surf = self.font_mono.render(dist_text, True, self.colors['text_dim'])
+                surface.blit(dist_surf, (rect[0] + 65, bar_y - 1))
+
+        # Path information
+        y_offset += 110
+        path_info = [
+            ("Waypoints", len(car.path_waypoints) if hasattr(car, 'path_waypoints') else 0),
+            ("Current WP", car.current_waypoint_index if hasattr(car, 'current_waypoint_index') else 0),
+            ("Time Alive", car.time_alive if hasattr(car, 'time_alive') else 0)
+        ]
+
+        for label, value in path_info:
+            info_surf = self.font_small.render(f"{label}: {value}", True, self.colors['text_primary'])
+            surface.blit(info_surf, (rect[0], y_offset))
+            y_offset += 16
+
+        # Additional debug information
+        y_offset += 10
+        debug_info = [
+            ("Position", f"({car.x:.0f}, {car.y:.0f})"),
+            ("Angle", f"{car.angle:.1f}°"),
+            ("Speed", f"{car.velocity:.2f}" if hasattr(car, 'velocity') else "N/A"),
+            ("Crashed", "Yes" if car.crashed else "No")
+        ]
+
+        for label, value in debug_info:
+            info_surf = self.font_small.render(f"{label}: {value}", True, self.colors['text_primary'])
+            surface.blit(info_surf, (rect[0], y_offset))
+            y_offset += 16
+
+    def draw_controls_panel(self, surface, rect, mode):
+        """Draw control information"""
+        y_offset = rect[1]
+
+        # Controls
+        controls = [
+            "SPACE: Toggle pause",
+            "R: Reset simulation",
+            "C: Toggle camera follow",
+            "ESC: Quit"
+        ]
+
+        for control in controls:
+            ctrl_surf = self.font_small.render(control, True, self.colors['text_secondary'])
+            surface.blit(ctrl_surf, (rect[0], y_offset))
+            y_offset += 16
+
+    def draw_minimap(self, surface, rect, car, camera, road_system):
+        """Draw a mini-map showing car position and route"""
+        # Mini-map background
+        self.draw_rounded_rect(surface, self.colors['bg_dark'], rect, border_color=self.colors['border'])
+
+        # Title
+        title_surf = self.font_small.render("Mini-Map", True, self.colors['text_primary'])
+        surface.blit(title_surf, (rect[0] + 8, rect[1] + 4))
+
+        # Mini-map area
+        map_rect = (rect[0] + 4, rect[1] + 20, rect[2] - 8, rect[3] - 24)
+        map_center = (map_rect[0] + map_rect[2]//2, map_rect[1] + map_rect[3]//2)
+
+        # Draw simplified road network
+        scale = 0.02  # World to mini-map scale
+        if hasattr(road_system, 'road_segments') and road_system.road_segments:
+            for segment in road_system.road_segments[:50]:  # Limit for performance
+                start_x = map_center[0] + (segment.start[0] - car.x) * scale
+                start_y = map_center[1] + (segment.start[1] - car.y) * scale
+                end_x = map_center[0] + (segment.end[0] - car.x) * scale
+                end_y = map_center[1] + (segment.end[1] - car.y) * scale
+
+                # Only draw if within mini-map bounds
+                if (map_rect[0] <= start_x <= map_rect[0] + map_rect[2] and
+                    map_rect[1] <= start_y <= map_rect[1] + map_rect[3] and
+                    map_rect[0] <= end_x <= map_rect[0] + map_rect[2] and
+                    map_rect[1] <= end_y <= map_rect[1] + map_rect[3]):
+                    pygame.draw.line(surface, self.colors['text_dim'], (start_x, start_y), (end_x, end_y), 1)
+        else:
+            # Fallback: draw a simple grid if no road segments
+            for i in range(-5, 6):
+                grid_x = map_center[0] + i * 20
+                grid_y = map_center[1] + i * 20
+                if map_rect[0] <= grid_x <= map_rect[0] + map_rect[2]:
+                    pygame.draw.line(surface, self.colors['text_dim'], (grid_x, map_rect[1]), (grid_x, map_rect[1] + map_rect[3]), 1)
+                if map_rect[1] <= grid_y <= map_rect[1] + map_rect[3]:
+                    pygame.draw.line(surface, self.colors['text_dim'], (map_rect[0], grid_y), (map_rect[0] + map_rect[2], grid_y), 1)
+
+        # Draw car position
+        pygame.draw.circle(surface, self.colors['accent'], map_center, 3)
+        pygame.draw.circle(surface, self.colors['text_primary'], map_center, 3, 1)
+
+        # Draw waypoints
+        if hasattr(car, 'path_waypoints') and car.path_waypoints:
+            for i, wp in enumerate(car.path_waypoints):
+                if i < 10:  # Limit waypoints shown
+                    wp_x = map_center[0] + (wp[0] - car.x) * scale
+                    wp_y = map_center[1] + (wp[1] - car.y) * scale
+                    if (map_rect[0] <= wp_x <= map_rect[0] + map_rect[2] and
+                        map_rect[1] <= wp_y <= map_rect[1] + map_rect[3]):
+                        color = self.colors['success'] if i > car.current_waypoint_index else self.colors['warning']
+                        pygame.draw.circle(surface, color, (wp_x, wp_y), 2)
+
+    def draw_ai_network_simple(self, surface, rect, car):
+        """Draw a representative neural network visualization showing actual activations"""
+        # Network background
+        self.draw_rounded_rect(surface, self.colors['bg_medium'], rect, border_color=self.colors['border_highlight'])
+
+        # Title
+        title_surf = self.font_small.render("Neural Network", True, self.colors['text_primary'])
+        surface.blit(title_surf, (rect[0] + 8, rect[1] + 4))
+
+        center_y = rect[1] + rect[3]//2
+
+        # Input layer (11 neurons for raycasts, speed, direction, road deviation)
+        input_x = rect[0] + 15
+        input_spacing = min(12, (rect[3] - 20) // 11)
+
+        # Get actual input values if available
+        input_values = []
+        if hasattr(car, 'raycast_distances') and len(car.raycast_distances) >= 8:
+            # Raycast distances (normalized)
+            for dist in car.raycast_distances[:8]:
+                input_values.append(min(1.0, dist / car.raycast_length))
+            # Speed
+            input_values.append(min(1.0, abs(car.speed) / 5.0))
+            # Target direction
+            target_dir = car.get_target_direction() / 180.0 if hasattr(car, 'get_target_direction') else 0
+            input_values.append(target_dir)
+            # Road center deviation
+            road_dev = 0.0
+            if hasattr(car, 'road_system') and car.road_system:
+                road_dev = car.road_system.get_normalized_center_deviation(car.x, car.y)
+            input_values.append(road_dev)
+        else:
+            # Default values if no data available
+            input_values = [0.5] * 11
+
+        # Draw input neurons
+        for i in range(11):
+            y = rect[1] + 20 + i * input_spacing
+            # Color based on activation level
+            activation = (input_values[i] + 1) / 2  # Convert to 0-1 range
+            color = self._lerp_color(self.colors['text_dim'], self.colors['accent'], activation)
+            pygame.draw.circle(surface, color, (input_x, y), 3)
+
+            # Label first few inputs
+            if i < 8:
+                label = self.font_mono.render(f"R{i}", True, self.colors['text_dim'])
+                surface.blit(label, (input_x - 12, y - 4))
+
+        # Hidden layer (32 neurons)
+        hidden_x = rect[0] + rect[2]//2
+        hidden_spacing = min(8, (rect[3] - 20) // 16)  # Show 16 neurons for space
+
+        # Simulate hidden layer activations (we can't access internal layers easily)
+        # Use a simple pattern based on inputs
+        for i in range(16):
+            y = rect[1] + 20 + i * hidden_spacing
+            # Create a pseudo-activation based on input patterns
+            activation = sum(input_values[j] * ((i + j) % 3) for j in range(min(11, i+1))) / (i+1)
+            activation = min(1.0, max(0.0, activation))
+            color = self._lerp_color(self.colors['text_dim'], self.colors['warning'], activation)
+            pygame.draw.circle(surface, color, (hidden_x, y), 3)
+
+        # Output layer (2 neurons: acceleration, steering)
+        output_x = rect[0] + rect[2] - 15
+
+        # Get actual output values
+        accel_activation = car.ai_acceleration if hasattr(car, 'ai_acceleration') else 0
+        steer_activation = car.ai_steering if hasattr(car, 'ai_steering') else 0
+
+        # Acceleration neuron
+        accel_y = center_y - 10
+        accel_color = self._lerp_color(self.colors['text_dim'], self.colors['success'], (accel_activation + 1) / 2)
+        pygame.draw.circle(surface, accel_color, (output_x, accel_y), 4)
+        accel_label = self.font_mono.render("A", True, self.colors['text_dim'])
+        surface.blit(accel_label, (output_x + 8, accel_y - 4))
+
+        # Steering neuron
+        steer_y = center_y + 10
+        steer_color = self._lerp_color(self.colors['text_dim'], self.colors['error'], (steer_activation + 1) / 2)
+        pygame.draw.circle(surface, steer_color, (output_x, steer_y), 4)
+        steer_label = self.font_mono.render("S", True, self.colors['text_dim'])
+        surface.blit(steer_label, (output_x + 8, steer_y - 4))
+
+        # Draw some connections to show network structure
+        # Input to hidden connections (show a few)
+        for i in range(0, 11, 3):  # Every 3rd input
+            for j in range(0, 16, 4):  # Every 4th hidden
+                start_y = rect[1] + 20 + i * input_spacing
+                end_y = rect[1] + 20 + j * hidden_spacing
+                pygame.draw.line(surface, self.colors['text_dim'],
+                               (input_x, start_y), (hidden_x, end_y), 1)
+
+        # Hidden to output connections
+        for i in range(0, 16, 4):
+            hidden_y = rect[1] + 20 + i * hidden_spacing
+            # Connect to both outputs
+            pygame.draw.line(surface, self.colors['text_dim'], (hidden_x, hidden_y), (output_x, accel_y), 1)
+            pygame.draw.line(surface, self.colors['text_dim'], (hidden_x, hidden_y), (output_x, steer_y), 1)
+
+    def _lerp_color(self, color1, color2, t):
+        """Linear interpolation between two colors"""
+        return (
+            int(color1[0] + (color2[0] - color1[0]) * t),
+            int(color1[1] + (color2[1] - color1[1]) * t),
+            int(color1[2] + (color2[2] - color1[2]) * t)
+        )
+
+    def draw_hud(self, surface, car, generation=0, best_fitness=0, avg_fitness=0, cars_alive=0, mode=0, road_system=None):
+        """Draw the complete modern HUD"""
+        # AI Status Panel
+        self.draw_panel(surface, "AI Status", self.panels['ai_status'], lambda s, r: self.draw_ai_status_panel(s, r, car))
+
+        # Performance Panel
+        self.draw_panel(surface, "Performance", self.panels['performance'], lambda s, r: self.draw_performance_panel(s, r, generation, best_fitness, avg_fitness, cars_alive))
+
+        # Debug Panel
+        self.draw_panel(surface, "Debug Info", self.panels['debug'], lambda s, r: self.draw_debug_panel(s, r, car))
+
+        # Mini-Map Panel
+        if road_system:
+            self.draw_panel(surface, "Mini-Map", self.panels['minimap'], lambda s, r: self.draw_minimap(s, r, car, None, road_system))
+
+        # Neural Network Panel
+        self.draw_panel(surface, "Neural Network", self.panels['network'], lambda s, r: self.draw_ai_network_simple(s, r, car))
+
+        # Controls Panel
+        self.draw_panel(surface, "Controls", self.panels['controls'], lambda s, r: self.draw_controls_panel(s, r, mode))
+
+# Global HUD instance
+hud = ModernHUD()
 
 def draw_performance_graph(screen, x, y, width=300, height=200):
     """Draw a performance graph in the bottom left corner"""
@@ -2270,50 +2261,15 @@ while running:
             generation += 1
             print(f"Generation {generation} started")
         
-        # Display info with saved cars count and checkpoint streaks
-        font = pygame.font.Font(None, 36)
-        info_text = f"TRAINING MODE | Gen: {generation} | Alive: {alive_cars} | Saved: {saved_cars} | Time: {evolution_timer // FPS}s"
-        if best_car:
-            info_text += f" | Best: {best_car.fitness:.1f}"
-            if best_car.saved_state:
-                info_text += " (SAVED!)"
-        
-        text_surface = font.render(info_text, True, WHITE)
-        text_rect = text_surface.get_rect()
-        text_rect.topleft = (10, 10)
-        
-        pygame.draw.rect(screen, (0, 0, 0, 128), text_rect.inflate(10, 5))
-        screen.blit(text_surface, text_rect)
-        
-        # Display checkpoint streak info for best car
-        if best_car:
-            streak_font = pygame.font.Font(None, 28)
-            streak_text = f"Best Car - Checkpoint Streak: {best_car.checkpoint_streak} | Max Streak: {best_car.max_checkpoint_streak} | Fast Streak: {best_car.consecutive_fast_checkpoints}"
-            streak_surface = streak_font.render(streak_text, True, YELLOW)
-            streak_rect = streak_surface.get_rect()
-            streak_rect.topleft = (10, text_rect.bottom + 5)
-            
-            pygame.draw.rect(screen, (0, 0, 0, 128), streak_rect.inflate(10, 5))
-            screen.blit(streak_surface, streak_rect)
-        
-        # Display pathfinding info with performance stats
-        pathfinding_info = f"Pathfinding: {len(cars)} cars with individual destinations"
-        pathfinding_surface = font.render(pathfinding_info, True, WHITE)
-        pathfinding_rect = pathfinding_surface.get_rect()
-        pathfinding_rect.topleft = (10, (streak_rect.bottom if best_car else text_rect.bottom) + 10)
-        
-        pygame.draw.rect(screen, (0, 0, 0, 128), pathfinding_rect.inflate(10, 5))
-        screen.blit(pathfinding_surface, pathfinding_rect)
-        
-        # Draw AI control visualization for active (moving) best car
+        # Draw modern HUD for active (moving) best car
         if active_best_car:
-            control_x = WIDTH - 120
-            control_y = HEIGHT - 150
-            draw_ai_controls(screen, active_best_car, control_x, control_y)
-            # Neural network visualization
-            nn_x = WIDTH - 220
-            nn_y = 50
-            draw_neural_network(screen, active_best_car, nn_x, nn_y)
+            # Calculate performance metrics
+            current_generation = len(generation_history) if generation_history else 0
+            best_fitness_val = max(fitness_history) if fitness_history else 0
+            avg_fitness_val = sum(list(fitness_history)[-10:]) / len(list(fitness_history)[-10:]) if fitness_history else 0
+            cars_alive_count = sum(1 for car in cars if not car.crashed) if 'cars' in locals() else 0
+
+            hud.draw_hud(screen, active_best_car, current_generation, best_fitness_val, avg_fitness_val, cars_alive_count, mode, road_system)
         
         # Draw performance graph in bottom left corner
         graph_x = 20
@@ -2346,33 +2302,8 @@ while running:
             car.update_raycasts()
             car.draw(camera, True)  # Always visualize the destination mode car
             
-            # Draw AI controls and neural network
-            control_x = WIDTH - 120
-            control_y = HEIGHT - 150
-            draw_ai_controls(screen, car, control_x, control_y)
-            nn_x = WIDTH - 220
-            nn_y = 50
-            draw_neural_network(screen, car, nn_x, nn_y)
-        
-        # Display destination mode info
-        font = pygame.font.Font(None, 36)
-        if destination_mode_state == "waiting":
-            info_text = "DESTINATION MODE | Click to select start position"
-        elif destination_mode_state == "selecting_start":
-            info_text = "DESTINATION MODE | Click to select destination"
-        elif destination_mode_state == "driving":
-            info_text = f"DESTINATION MODE | Car driving | Distance: {destination_mode_car.distance_traveled:.1f} | Time: {destination_mode_car.time_alive // FPS}s"
-            if destination_mode_car.crashed:
-                info_text += " | CRASHED! Click to restart"
-        else:
-            info_text = "DESTINATION MODE"
-        
-        text_surface = font.render(info_text, True, WHITE)
-        text_rect = text_surface.get_rect()
-        text_rect.topleft = (10, 10)
-        
-        pygame.draw.rect(screen, (0, 0, 0, 128), text_rect.inflate(10, 5))
-        screen.blit(text_surface, text_rect)
+            # Draw modern HUD for destination mode car
+            hud.draw_hud(screen, car, 0, 0, 0, 1, mode, road_system)
 
     pygame.display.flip()
     clock.tick(FPS)
