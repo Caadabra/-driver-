@@ -14,7 +14,7 @@ This project is a simulation environment for autonomous driving, featuring AI mo
 ## Requirements
 
 - Python 3.10+
-- Required packages: Install via `pip install -r requirements.txt` (if available)
+- Required packages: Install via `pip install -r requirements.txt'
 
 ## Setup
 
@@ -35,7 +35,6 @@ This project is a simulation environment for autonomous driving, featuring AI mo
 - `car.py`: Car simulation logic
 - `simulation_core.py`: Core simulation engine
 - `visual3d_server.py`: 3D visualization server
-- `ui/`: User interface components
 - `trained_models/`: Saved AI models
 - `poparchive/`: Population archives for evolution
 
@@ -45,4 +44,4 @@ Feel free to contribute by submitting pull requests or issues.
 
 ## License
 
-[Add license information here]
+idk maybe just the MIT one idk the one. 
