@@ -245,7 +245,6 @@ class FluidWebView(QWebEngineView):
             return []
             
         # For simplicity, we're using a preset start location
-        # In a real app, you would geocode the address to coordinates
         if start_location.lower() == "current location":
             # Use a fixed starting point near the center
             start_x, start_y, _ = self.road_system.get_random_spawn_point()
@@ -553,9 +552,38 @@ class FluidWebView(QWebEngineView):
             pass
             
     def set_selected_route(self, route_data):
-        """Set the selected route data from JavaScript"""
-        print(f"Setting selected route: {route_data}")
-        self.selected_route = route_data
+        """Set the selected route data from JavaScript (accepts index or route object)."""
+        try:
+            print(f"JS called set_selected_route with: {route_data!r}")
+            # If JS passed an index (number or numeric string), resolve it
+            if isinstance(route_data, (int, float)) or (isinstance(route_data, str) and route_data.isdigit()):
+                idx = int(route_data)
+                if 0 <= idx < len(self.routes):
+                    self.selected_route = self.routes[idx]
+                    print(f"Selected route index {idx}: {self.selected_route.get('type','Unknown')}")
+                else:
+                    print(f"Route index out of range: {idx}")
+                    self.selected_route = None
+            elif isinstance(route_data, dict):
+                # JS passed the full route object
+                self.selected_route = route_data
+                print(f"Selected route object stored: {self.selected_route.get('type','Unknown')}")
+            else:
+                print("set_selected_route received unsupported data type")
+                self.selected_route = None
+
+            # Notify internal listeners: emit ui_route_selected with index if known, otherwise -1
+            if self.selected_route:
+                try:
+                    idx = next((i for i, r in enumerate(self.routes) if r.get('waypoints') == self.selected_route.get('waypoints')), None)
+                    self.ui_route_selected.emit(int(idx) if idx is not None else -1)
+                except Exception:
+                    self.ui_route_selected.emit(-1)
+            else:
+                # Emit a negative index to indicate no valid selection
+                self.ui_route_selected.emit(-1)
+        except Exception as e:
+            print(f"Error in set_selected_route: {e}")
             
     def mousePressEvent(self, event):
         """Handle mouse press events"""
