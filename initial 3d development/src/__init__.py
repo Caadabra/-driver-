@@ -1,3 +1,0 @@
-"""
-Driving simulation package
-"""
