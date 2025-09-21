@@ -1,0 +1,3788 @@
+<!DOCTYPE html>
+    <html>
+        <head>
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700&family=JetBrains+Mono:wght@100;200;300;400;500&display=swap');
+
+                html, body {
+                    overflow: hidden;
+                    margin: 0;
+                    padding: 0;
+                    position: absolute;
+                    width: 100%;
+                    height: 100%;
+                    /* Consistent monochromatic background */
+                    background:
+                        radial-gradient(1200px circle at 20% 10%, rgba(255, 255, 255, 0.03), rgba(0,0,0,0) 45%),
+                        radial-gradient(900px circle at 80% 30%, rgba(255, 255, 255, 0.02), rgba(0,0,0,0) 50%),
+                        radial-gradient(700px circle at 50% 80%, rgba(255, 255, 255, 0.04), rgba(0,0,0,0) 55%),
+                        linear-gradient(180deg, #0a0a0a 0%, #000 70%);
+                    position: relative;
+                    isolation: isolate;
+                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    font-optical-sizing: auto;
+                    /* Global scrollbar removal */
+                    scrollbar-width: none; /* Firefox */
+                    -ms-overflow-style: none; /* Internet Explorer 10+ */
+                }
+                
+                /* Hide all scrollbars globally for webkit browsers */
+                * {
+                    scrollbar-width: none; /* Firefox */
+                    -ms-overflow-style: none; /* Internet Explorer 10+ */
+                }
+                
+                *::-webkit-scrollbar {
+                    width: 0px;
+                    background: transparent;
+                    display: none;
+                }
+                
+                *::-webkit-scrollbar-track {
+                    background: transparent;
+                    display: none;
+                }
+                
+                *::-webkit-scrollbar-thumb {
+                    background: transparent;
+                    display: none;
+                }
+                
+                *::-webkit-scrollbar-corner {
+                    background: transparent;
+                    display: none;
+                }
+
+                /* Toast notifications */
+                .toast-container {
+                    position: fixed;
+                    bottom: 24px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    z-index: 5000;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 10px;
+                    pointer-events: none;
+                }
+                .toast {
+                    min-width: 280px;
+                    max-width: 520px;
+                    padding: 12px 16px;
+                    border-radius: 10px;
+                    color: #fff;
+                    font-family: 'Inter', sans-serif;
+                    font-size: 14px;
+                    background: rgba(20, 20, 20, 0.9);
+                    border: 1px solid rgba(255,255,255,0.12);
+                    backdrop-filter: blur(10px);
+                    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+                    opacity: 0;
+                    transform: translateY(10px);
+                    transition: opacity 200ms ease, transform 200ms ease;
+                    pointer-events: auto;
+                }
+                .toast.show { opacity: 1; transform: translateY(0); }
+                .toast.success { border-color: rgba(0,255,136,0.4); }
+                .toast.error { border-color: rgba(255,51,102,0.4); }
+
+                canvas {
+                    width: 100%;
+                    height: 100%;
+                    display: block;
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    z-index: 1;
+                }
+
+                /* Subtle noise overlay above canvas, below UI */
+                body::before {
+                    content: "";
+                    position: fixed;
+                    inset: 0;
+                    z-index: 1; /* canvas is 1, overlay UI is 2+ */
+                    pointer-events: none;
+                    background-image:
+                        radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1.2px),
+                        radial-gradient(rgba(0,0,0,0.06) 1px, transparent 1.2px);
+                    background-size: 3px 3px, 4px 4px;
+                    background-position: 0 0, 1px 1px;
+                    mix-blend-mode: overlay;
+                    opacity: 0.6;
+                }
+
+                .overlay {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                    align-items: center;
+                    z-index: 2;
+                    pointer-events: none;
+                }
+
+                .glass-container {
+                    backdrop-filter: blur(20px) saturate(180%);
+                    -webkit-backdrop-filter: blur(20px) saturate(180%);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.02) 0%,
+                        rgba(255, 255, 255, 0.01) 50%,
+                        rgba(0, 0, 0, 0.05) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 32px;
+                    padding: 80px 120px;
+                    text-align: center;
+                    box-shadow:
+                        0 8px 32px rgba(0, 0, 0, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1),
+                        inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+                    position: relative;
+                    overflow: hidden;
+                    min-width: 400px;
+                    transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1), filter 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+
+                /* Implode animation to reveal search */
+                body.show-search .overlay { pointer-events: none; }
+                body.show-search .glass-container {
+                    transform: scale(0.85);
+                    opacity: 0;
+                    filter: blur(18px);
+                }
+
+                .glass-container::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 1px;
+                    background: linear-gradient(90deg,
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.2) 50%,
+                        transparent 100%);
+                }
+
+                .title {
+                    font-size: 72px;
+                    font-weight: 100;
+                    font-family: 'Inter', sans-serif;
+                    color: #ffffff;
+                    margin: 0 0 16px 0;
+                    letter-spacing: -0.04em;
+                    line-height: 0.9;
+                    background: linear-gradient(135deg, #ffffff 0%, #e0e0e0 100%);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    background-clip: text;
+                    position: relative;
+                }
+
+                .title::after {
+                    content: '';
+                    position: absolute;
+                    bottom: -8px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    width: 40px;
+                    height: 1px;
+                    background: linear-gradient(90deg,
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.4) 50%,
+                        transparent 100%);
+                }
+
+                .subtitle {
+                    font-size: 14px;
+                    font-weight: 300;
+                    font-family: 'JetBrains Mono', monospace;
+                    color: rgba(255, 255, 255, 0.6);
+                    margin: 24px 0 40px 0;
+                    letter-spacing: 0.1em;
+                    text-transform: uppercase;
+                    opacity: 0.8;
+                }
+
+                .slider-container {
+                    position: relative;
+                    width: 280px;
+                    height: 56px;
+                    margin: 0 auto;
+                    pointer-events: auto;
+                }
+
+                .slider-track {
+                    width: 100%;
+                    height: 100%;
+                    background: linear-gradient(135deg,
+                        rgba(0, 0, 0, 0.2) 0%,
+                        rgba(0, 0, 0, 0.1) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.05);
+                    border-radius: 28px;
+                    position: relative;
+                    overflow: hidden;
+                    backdrop-filter: blur(10px);
+                }
+
+                .slider-track::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 1px;
+                    background: linear-gradient(90deg,
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.1) 50%,
+                        transparent 100%);
+                }
+
+                .slider-button {
+                    position: absolute;
+                    top: 4px;
+                    left: 4px;
+                    width: 48px;
+                    height: 48px;
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.15) 0%,
+                        rgba(255, 255, 255, 0.05) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    border-radius: 24px;
+                    cursor: grab;
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    backdrop-filter: blur(10px);
+                    box-shadow:
+                        0 4px 16px rgba(0, 0, 0, 0.3),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+                }
+
+                .slider-button:hover {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.2) 0%,
+                        rgba(255, 255, 255, 0.1) 100%);
+                    box-shadow:
+                        0 6px 20px rgba(0, 0, 0, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+                }
+
+                .slider-button:active {
+                    cursor: grabbing;
+                    transform: scale(0.98);
+                }
+
+                .slider-arrow {
+                    color: rgba(255, 255, 255, 0.8);
+                    font-size: 20px;
+                    font-weight: 200;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 100%;
+                    height: 100%;
+                }
+
+                .slider-text {
+                    position: absolute;
+                    top: 50%;
+                    left: 60px;
+                    right: 20px;
+                    transform: translateY(-50%);
+                    font-family: 'JetBrains Mono', monospace;
+                    font-size: 12px;
+                    font-weight: 300;
+                    color: rgba(255, 255, 255, 0.4);
+                    letter-spacing: 0.05em;
+                    text-transform: uppercase;
+                    text-align: center;
+                    pointer-events: none;
+                    transition: opacity 0.2s ease;
+                }
+
+                .slider-container.sliding .slider-text {
+                    opacity: 0;
+                }
+
+                .slider-container.completed .slider-button {
+                    left: calc(100% - 52px);
+                    background: linear-gradient(135deg,
+                        rgba(100, 200, 255, 0.3) 0%,
+                        rgba(100, 200, 255, 0.1) 100%);
+                    border-color: rgba(100, 200, 255, 0.4);
+                }
+
+                .slider-container.completed .slider-arrow {
+                    color: rgba(100, 200, 255, 1);
+                }
+
+                .arrow {
+                    font-size: 16px;
+                    color: rgba(255, 255, 255, 0.3);
+                    margin-top: 24px;
+                    font-weight: 200;
+                }
+
+
+
+                .clickable-area {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    z-index: 3;
+                    cursor: default;
+                    pointer-events: auto;
+                }
+
+                /* Remove custom cursor - show normal cursor */
+
+                .tos-container {
+                    position: absolute;
+                    bottom: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    z-index: 4;
+                    pointer-events: none;
+                }
+
+                .tos-text {
+                    font-family: 'JetBrains Mono', monospace;
+                    font-size: 10px;
+                    font-weight: 300;
+                    color: rgba(255, 255, 255, 0.25);
+                    text-align: center;
+                    line-height: 1.4;
+                    letter-spacing: 0.02em;
+                    max-width: 600px;
+                    padding: 0 20px;
+                }
+
+                .tos-text a {
+                    color: rgba(255, 255, 255, 0.4);
+                    text-decoration: none;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                    transition: all 0.2s ease;
+                    pointer-events: auto;
+                }
+
+                .tos-text a:hover {
+                    color: rgba(255, 255, 255, 0.6);
+                    border-bottom-color: rgba(255, 255, 255, 0.3);
+                }
+
+                /* Search screen (hidden at first) */
+                .search-screen {
+                    position: absolute;
+                    inset: 0;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    z-index: 5;
+                    opacity: 0;
+                    pointer-events: none;
+                    transition: opacity 0.6s ease;
+                }
+                .search-screen.active {
+                    opacity: 1;
+                    pointer-events: auto;
+                }
+
+                /* Navigation layout (hidden initially) - Minimal dark styling */
+                .nav-layout {
+                    position: absolute;
+                    inset: 0;
+                    display: flex;
+                    z-index: 6;
+                    opacity: 0;
+                    pointer-events: none;
+                    /* Minimal dark background */
+                    background: linear-gradient(180deg, #0a0a0a 0%, #000000 100%);
+                }
+                
+                /* Only inner elements will have transitions */
+                .nav-layout.active {
+                    opacity: 1;
+                    pointer-events: auto;
+                }
+                
+                /* Premium left sidebar with better proportions */
+                .routes-panel {
+                    position: absolute;
+                    width: min(420px, 35%); /* Fixed max width for better UX */
+                    height: calc(100% - 48px); /* More generous padding */
+                    top: 24px;
+                    left: 24px;
+                    backdrop-filter: blur(25px) saturate(180%);
+                    -webkit-backdrop-filter: blur(25px) saturate(180%);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(255, 255, 255, 0.04) 50%,
+                        rgba(0, 0, 0, 0.15) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-radius: 24px; /* Slightly larger radius */
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                    box-shadow:
+                        0 20px 60px rgba(0, 0, 0, 0.6),
+                        0 8px 32px rgba(0, 0, 0, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+                
+                /* Spacious map container */
+                .map-container {
+                    position: absolute;
+                    width: calc(100% - min(420px, 35%) - 64px); /* Dynamic width based on sidebar */
+                    height: calc(100% - 48px);
+                    top: 24px;
+                    right: 24px;
+                    backdrop-filter: blur(25px) saturate(150%);
+                    -webkit-backdrop-filter: blur(25px) saturate(150%);
+                    background: linear-gradient(135deg,
+                        rgba(10, 15, 20, 0.8) 0%,
+                        rgba(5, 10, 15, 0.9) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 24px;
+                    overflow: hidden;
+                    box-shadow:
+                        0 20px 60px rgba(0, 0, 0, 0.5),
+                        0 8px 32px rgba(0, 0, 0, 0.3),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+
+                /* Driving transition states */
+                body.driving .routes-panel {
+                    transform: translateX(-40px);
+                    opacity: 0;
+                    pointer-events: none;
+                }
+
+                body.driving .map-container {
+                    width: calc(100% - 48px);
+                }
+
+                /* Black fade overlay over the map */
+                #blackFade {
+                    position: absolute;
+                    inset: 0;
+                    background: #000;
+                    opacity: 0;
+                    transition: opacity 600ms ease;
+                    pointer-events: none;
+                    z-index: 2000;
+                }
+                body.driving #blackFade {
+                    opacity: 1;
+                }
+                
+                /* Route details */
+                .route-header {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-bottom: 12px;
+                }
+                
+                .route-type {
+                    font-size: 13px;
+                    font-weight: 300;
+                    color: rgba(255, 255, 255, 0.65);
+                    text-transform: uppercase;
+                    letter-spacing: 0.8px;
+                    margin-bottom: 8px;
+                }
+                
+                .route-time {
+                    font-size: 18px;
+                    font-weight: 600;
+                    color: rgba(255, 255, 255, 0.95);
+                    margin-bottom: 6px;
+                    letter-spacing: 0.01em;
+                }
+                
+                .route-path {
+                    display: flex;
+                }
+                
+                .route-line {
+                    width: 30px;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    margin-right: 12px;
+                }
+                
+                .path-dot {
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.7);
+                    margin: 2px 0;
+                }
+                
+                .path-dot.start {
+                    background: #4CAF50;
+                }
+                
+                .path-dot.end {
+                    background: #F44336;
+                }
+                
+                .path-dot.traffic-medium {
+                    background: #FFC107;
+                }
+                
+                .path-line {
+                    width: 2px;
+                    height: 24px;
+                    background: rgba(255, 255, 255, 0.4);
+                }
+                
+                .path-line.traffic-light {
+                    background: #4CAF50;
+                }
+                
+                .route-details {
+                    flex: 1;
+                }
+                
+                .route-distance {
+                    font-size: 15px;
+                    color: rgba(255, 255, 255, 0.85);
+                    margin-bottom: 6px;
+                    font-weight: 500;
+                    letter-spacing: 0.005em;
+                }
+                
+                .route-desc {
+                    font-size: 14px;
+                    color: rgba(255, 255, 255, 0.7);
+                    margin-bottom: 6px;
+                    line-height: 1.4;
+                    font-weight: 400;
+                }
+                
+                .route-conditions {
+                    font-size: 13px;
+                    color: rgba(100, 200, 255, 0.8);
+                }
+                
+                /* Minimal start navigation button */
+                .start-navigation {
+                    padding: 16px;
+                    opacity: 0;
+                    transform: translateY(20px);
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.8s forwards;
+                    background: rgba(0, 0, 0, 0.2);
+                    margin: 0 16px 16px;
+                }
+                
+                .start-button {
+                    width: 100%;
+                    padding: 14px 0;
+                    background: rgba(255, 255, 255, 0.08);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 8px;
+                    color: rgba(255, 255, 255, 0.9);
+                    font-family: 'Inter', sans-serif;
+                    font-size: 14px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    text-transform: uppercase;
+                    letter-spacing: 0.02em;
+                }
+                
+                .start-button:hover {
+                    background: rgba(255, 255, 255, 0.12);
+                    border-color: rgba(255, 255, 255, 0.15);
+                }
+                
+                .start-button:active {
+                    background: rgba(255, 255, 255, 0.06);
+                }
+                
+                /* Map container */
+                .map-ui-overlay {
+                    position: absolute;
+                    inset: 0;
+                    pointer-events: none;
+                    z-index: 2;
+                }
+                
+                /* Enhanced map controls with futuristic styling */
+                .map-controls {
+                    position: absolute;
+                    top: 24px;
+                    right: 24px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                    pointer-events: auto;
+                }
+                
+                .map-control {
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 12px;
+                    backdrop-filter: blur(15px) saturate(150%);
+                    -webkit-backdrop-filter: blur(15px) saturate(150%);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(0, 0, 0, 0.6) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    font-size: 18px;
+                    color: rgba(255, 255, 255, 0.95);
+                    font-weight: 300;
+                    box-shadow:
+                        0 4px 16px rgba(0, 0, 0, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                }
+                
+                .map-control:hover {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.12) 0%,
+                        rgba(0, 0, 0, 0.7) 100%);
+                    border-color: rgba(255, 255, 255, 0.2);
+                    transform: translateY(-2px);
+                    box-shadow:
+                        0 6px 20px rgba(0, 0, 0, 0.5),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                }
+                
+                .map-control:active {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.06) 0%,
+                        rgba(0, 0, 0, 0.8) 100%);
+                    transform: translateY(0);
+                }
+                
+                /* Glass morphic point selection button */
+                .point-selection-button {
+                    position: absolute;
+                    bottom: 30px;
+                    right: 24px;
+                    backdrop-filter: blur(15px) saturate(150%);
+                    -webkit-backdrop-filter: blur(15px) saturate(150%);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(0, 0, 0, 0.6) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-radius: 50%;
+                    width: 60px;
+                    height: 60px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: rgba(255, 255, 255, 0.95);
+                    cursor: pointer;
+                    pointer-events: auto;
+                    z-index: 10;
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    font-size: 20px;
+                    box-shadow:
+                        0 4px 16px rgba(0, 0, 0, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                }
+                
+                .point-selection-button:hover {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.12) 0%,
+                        rgba(0, 0, 0, 0.7) 100%);
+                    border-color: rgba(255, 255, 255, 0.2);
+                    transform: translateY(-2px);
+                    box-shadow:
+                        0 6px 20px rgba(0, 0, 0, 0.5),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                }
+                
+                /* Glass morphic point selection tooltip */
+                .point-selection-tooltip {
+                    position: absolute;
+                    top: 24px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    backdrop-filter: blur(15px) saturate(150%);
+                    -webkit-backdrop-filter: blur(15px) saturate(150%);
+                    background: linear-gradient(135deg,
+                        rgba(0, 0, 0, 0.8) 0%,
+                        rgba(20, 20, 20, 0.9) 100%);
+                    color: rgba(255, 255, 255, 0.95);
+                    padding: 12px 20px;
+                    border-radius: 12px;
+                    font-size: 14px;
+                    pointer-events: none;
+                    z-index: 10;
+                    opacity: 0;
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    font-family: 'JetBrains Mono', monospace;
+                    font-weight: 300;
+                    letter-spacing: 0.02em;
+                    box-shadow:
+                        0 4px 16px rgba(0, 0, 0, 0.5),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                }
+                
+                .point-selection-tooltip.active {
+                    opacity: 1;
+                }
+                
+                .route-preview {
+                    position: absolute;
+                    left: 20px;
+                    bottom: 20px;
+                    width: 280px;
+                    padding: 10px;
+                    background: rgba(20, 20, 30, 0.8);
+                    backdrop-filter: blur(10px);
+                    -webkit-backdrop-filter: blur(10px);
+                    border-radius: 12px;
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+                    pointer-events: auto;
+                }
+                
+                .route-segment {
+                    display: flex;
+                    justify-content: space-between;
+                    padding: 10px 12px;
+                    border-left: 3px solid rgba(255, 255, 255, 0.4);
+                    margin-left: 10px;
+                }
+                
+                .route-segment.highway {
+                    border-color: #3F51B5;
+                }
+                
+                .route-segment.local {
+                    border-color: #009688;
+                }
+                
+                .route-segment.final {
+                    border-color: #FF5722;
+                }
+                
+                .segment-name {
+                    font-size: 14px;
+                    color: rgba(255, 255, 255, 0.9);
+                }
+                
+                .segment-distance {
+                    font-size: 14px;
+                    color: rgba(255, 255, 255, 0.7);
+                }
+                
+                /* Glass morphic map placeholder */
+                .map-placeholder {
+                    position: absolute;
+                    inset: 0;
+                    backdrop-filter: blur(20px) saturate(150%);
+                    -webkit-backdrop-filter: blur(20px) saturate(150%);
+                    background: linear-gradient(135deg,
+                        rgba(0, 0, 0, 0.6) 0%,
+                        rgba(10, 10, 10, 0.8) 50%,
+                        rgba(0, 0, 0, 0.9) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.05);
+                    z-index: 1;
+                    overflow: hidden;
+                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                }
+                
+                /* Road styles */
+                .map-road {
+                    stroke: rgba(50, 50, 70, 0.8);
+                    stroke-width: 6px;
+                    fill: none;
+                }
+                
+                /* Route styles */
+                .route-path {
+                    stroke-width: 8px;
+                    fill: none;
+                    stroke-linecap: round;
+                    stroke-linejoin: round;
+                }
+                
+                .route-path.fastest {
+                    stroke: rgba(255, 255, 255, 0.9);
+                    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.4));
+                }
+                
+                .route-path.scenic {
+                    stroke: rgba(200, 200, 200, 0.8);
+                    filter: drop-shadow(0 0 8px rgba(200, 200, 200, 0.3));
+                }
+                
+                .route-path.eco {
+                    stroke: rgba(160, 160, 160, 0.7);
+                    filter: drop-shadow(0 0 8px rgba(160, 160, 160, 0.3));
+                }
+                
+                /* Location markers */
+                .map-marker {
+                    position: absolute;
+                    width: 24px;
+                    height: 24px;
+                    margin-left: -12px;
+                    margin-top: -24px;
+                    background-size: contain;
+                    background-repeat: no-repeat;
+                    z-index: 5;
+                }
+                
+                .map-marker.start {
+                    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='%234CAF50' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E");
+                }
+                
+                .map-marker.end {
+                    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='%23F44336' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/%3E%3C/svg%3E");
+                }
+                
+                /* Pulse animation for location */
+                @keyframes pulse {
+                    0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+                    70% { transform: translate(-50%, -50%) scale(3); opacity: 0; }
+                    100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+                }
+                
+                /* Enhanced location markers for map */
+                .current-location-marker {
+                    position: absolute;
+                    width: 20px;
+                    height: 20px;
+                    background: radial-gradient(circle, #00ff88 0%, #00cc66 70%, #009944 100%);
+                    border: 3px solid rgba(255, 255, 255, 0.9);
+                    border-radius: 50%;
+                    box-shadow: 0 0 20px rgba(0, 255, 136, 0.6), 0 0 40px rgba(0, 255, 136, 0.3);
+                    animation: locationPulse 2s infinite;
+                    z-index: 1001;
+                    transform: translate(-50%, -50%);
+                    pointer-events: none;
+                }
+
+                .destination-marker {
+                    position: absolute;
+                    width: 24px;
+                    height: 32px;
+                    background: linear-gradient(135deg, #ff3366 0%, #cc1144 100%);
+                    border: 2px solid rgba(255, 255, 255, 0.9);
+                    border-radius: 50% 50% 50% 0;
+                    transform: translate(-50%, -100%) rotate(-45deg);
+                    box-shadow: 0 0 15px rgba(255, 51, 102, 0.5);
+                    z-index: 1002;
+                    pointer-events: none;
+                }
+
+                .destination-marker::after {
+                    content: '';
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    width: 8px;
+                    height: 8px;
+                    background: white;
+                    border-radius: 50%;
+                    transform: translate(-50%, -50%);
+                }
+
+                @keyframes locationPulse {
+                    0%, 100% { 
+                        box-shadow: 0 0 20px rgba(0, 255, 136, 0.6), 0 0 40px rgba(0, 255, 136, 0.3);
+                        transform: translate(-50%, -50%) scale(1);
+                    }
+                    50% { 
+                        box-shadow: 0 0 30px rgba(0, 255, 136, 0.8), 0 0 60px rgba(0, 255, 136, 0.5);
+                        transform: translate(-50%, -50%) scale(1.1);
+                    }
+                }
+
+                /* Route path styles */
+                .route-path {
+                    fill: none;
+                    stroke-width: 4;
+                    stroke-linecap: round;
+                    stroke-linejoin: round;
+                    opacity: 0.9;
+                    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
+                }
+
+                .route-fastest { 
+                    stroke: #00ff88;
+                    stroke-dasharray: none;
+                    animation: routeGlow 3s ease-in-out infinite;
+                }
+
+                .route-scenic { 
+                    stroke: #3399ff;
+                    stroke-dasharray: 8 4;
+                    animation: routeGlow 3s ease-in-out infinite 1s;
+                }
+
+                .route-eco { 
+                    stroke: #ffaa00;
+                    stroke-dasharray: 4 8 2 8;
+                    animation: routeGlow 3s ease-in-out infinite 2s;
+                }
+
+                @keyframes routeGlow {
+                    0%, 100% { stroke-width: 4; opacity: 0.9; }
+                    50% { stroke-width: 6; opacity: 1; }
+                }
+
+                /* Map container styling */
+                #leafletMap {
+                    background: #0a0a0a;
+                    border-radius: 20px;
+                }
+
+                /* Custom map controls */
+                .leaflet-control-container .leaflet-control {
+                    background: rgba(255, 255, 255, 0.1) !important;
+                    backdrop-filter: blur(10px) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+                    border-radius: 8px !important;
+                }
+
+                .leaflet-control-zoom a {
+                    background: transparent !important;
+                    color: rgba(255, 255, 255, 0.9) !important;
+                    border: none !important;
+                    font-size: 16px !important;
+                    line-height: 30px !important;
+                    width: 30px !important;
+                    height: 30px !important;
+                }
+
+                .leaflet-control-zoom a:hover {
+                    background: rgba(255, 255, 255, 0.2) !important;
+                    color: white !important;
+                }
+                
+                /* Premium navigation header with more breathing room */
+                .navigation-header {
+                    display: flex;
+                    align-items: center;
+                    padding: 24px 28px; /* More generous padding */
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.06) 0%,
+                        rgba(0, 0, 0, 0.4) 100%);
+                    backdrop-filter: blur(12px);
+                    -webkit-backdrop-filter: blur(12px);
+                }
+                
+                /* Premium back button with glass morphism */
+                .back-button {
+                    width: 40px; /* Slightly larger for better touch targets */
+                    height: 40px;
+                    border-radius: 12px;
+                    backdrop-filter: blur(10px);
+                    -webkit-backdrop-filter: blur(10px);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(255, 255, 255, 0.04) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                    margin-right: 16px; /* More space */
+                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    box-shadow:
+                        0 4px 16px rgba(0, 0, 0, 0.2),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                }
+                
+                .back-button:hover {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.12) 0%,
+                        rgba(255, 255, 255, 0.06) 100%);
+                    border-color: rgba(255, 255, 255, 0.18);
+                    transform: translateY(-1px);
+                    box-shadow:
+                        0 6px 20px rgba(0, 0, 0, 0.3),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                }
+                
+                .back-button .icon {
+                    font-size: 18px;
+                    color: rgba(255, 255, 255, 0.95);
+                    font-weight: 300;
+                }
+                
+                .navigation-title {
+                    flex: 1;
+                    padding-left: 4px;
+                }
+                
+                .title-location {
+                    font-size: 13px;
+                    color: rgba(255, 255, 255, 0.5);
+                    margin-bottom: 4px;
+                    font-weight: 300;
+                    letter-spacing: 0.02em;
+                    text-transform: uppercase;
+                    font-family: 'JetBrains Mono', monospace;
+                }
+                
+                .destination {
+                    font-size: 18px;
+                    font-weight: 500;
+                    color: rgba(255, 255, 255, 0.95);
+                    font-family: 'Inter', sans-serif;
+                    letter-spacing: -0.01em;
+                }
+                
+                /* Enhanced search bar with futuristic styling */
+                .search-bar-container {
+                    padding: 16px 20px;
+                    display: flex;
+                    align-items: center;
+                    opacity: 0;
+                    transform: translateY(20px);
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.3s forwards;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.04) 0%,
+                        rgba(255, 255, 255, 0.01) 100%);
+                    backdrop-filter: blur(8px);
+                }
+                
+                .search-bar {
+                    flex: 1;
+                    padding: 12px 16px;
+                    backdrop-filter: blur(15px) saturate(160%);
+                    -webkit-backdrop-filter: blur(15px) saturate(160%);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(255, 255, 255, 0.02) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    border-radius: 12px;
+                    color: rgba(255, 255, 255, 0.95);
+                    font-family: 'JetBrains Mono', monospace;
+                    font-size: 14px;
+                    margin-right: 16px;
+                    transition: all 0.3s ease;
+                    letter-spacing: 0.02em;
+                }
+                
+                .search-bar:hover {
+                    border-color: rgba(255, 255, 255, 0.25);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.12) 0%,
+                        rgba(255, 255, 255, 0.04) 100%);
+                }
+                
+                .search-actions {
+                    display: flex;
+                }
+                
+                .edit-button {
+                    padding: 8px 16px;
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(255, 255, 255, 0.04) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    border-radius: 8px;
+                    color: rgba(255, 255, 255, 0.95);
+                    font-size: 13px;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                    backdrop-filter: blur(10px);
+                    font-family: 'Inter', sans-serif;
+                    font-weight: 500;
+                }
+                
+                .edit-button:hover {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.12) 0%,
+                        rgba(255, 255, 255, 0.06) 100%);
+                    border-color: rgba(255, 255, 255, 0.25);
+                    transform: translateY(-1px);
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                }
+                
+                /* Enhanced journey details with futuristic styling */
+                .journey-details {
+                    display: flex;
+                    padding: 20px;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                    opacity: 0;
+                    transform: translateY(20px);
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.4s forwards;
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.06) 0%,
+                        rgba(255, 255, 255, 0.02) 100%);
+                    backdrop-filter: blur(8px);
+                }
+                
+                .journey-time {
+                    flex: 1;
+                }
+                
+                .eta {
+                    font-size: 18px;
+                    font-weight: 600;
+                    color: rgba(255, 255, 255, 0.95);
+                    margin-bottom: 6px;
+                    font-family: 'Inter', sans-serif;
+                }
+                
+                .depart-info {
+                    font-size: 13px;
+                    color: rgba(255, 255, 255, 0.7);
+                    font-family: 'JetBrains Mono', monospace;
+                    letter-spacing: 0.02em;
+                    font-weight: 300;
+                }
+                
+                /* Route options */
+                /* Spacious route options with better UX */
+                .route-options {
+                    flex: 1;
+                    overflow-y: auto;
+                    padding: 8px 28px 24px 28px; /* More generous padding */
+                    scroll-behavior: smooth;
+                    scrollbar-width: none; /* Firefox */
+                    -ms-overflow-style: none; /* Internet Explorer 10+ */
+                }
+                
+                /* Hide scrollbars completely for webkit browsers */
+                .route-options::-webkit-scrollbar {
+                    width: 0px;
+                    background: transparent;
+                }
+                
+                .route-options::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                
+                .route-options::-webkit-scrollbar-thumb {
+                    background: transparent;
+                }
+                
+                .route-options::-webkit-scrollbar-thumb:hover {
+                    background: transparent;
+                }
+                
+                .route-options h3 {
+                    font-size: 13px;
+                    font-weight: 400;
+                    color: rgba(255, 255, 255, 0.6);
+                    margin: 20px 0 16px; /* More space around heading */
+                    opacity: 0;
+                    transform: translateY(20px);
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.5s forwards;
+                    text-transform: uppercase;
+                    letter-spacing: 0.08em;
+                    font-family: 'JetBrains Mono', monospace;
+                    font-weight: 300;
+                }
+                
+                /* Premium route option cards with better spacing */
+                .route-option {
+                    margin-bottom: 16px; /* More space between cards */
+                    padding: 20px 24px; /* More generous padding */
+                    backdrop-filter: blur(20px) saturate(150%);
+                    -webkit-backdrop-filter: blur(20px) saturate(150%);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.06) 0%,
+                        rgba(255, 255, 255, 0.03) 50%,
+                        rgba(0, 0, 0, 0.08) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 16px; /* Larger radius */
+                    color: rgba(255, 255, 255, 0.95);
+                    font-family: 'Inter', sans-serif;
+                    cursor: pointer;
+                    transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+                    opacity: 0;
+                    transform: translateY(20px);
+                    box-shadow:
+                        0 6px 24px rgba(0, 0, 0, 0.25),
+                        0 2px 8px rgba(0, 0, 0, 0.15),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                    position: relative;
+                    overflow: hidden;
+                }
+                
+                .route-option::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 1px;
+                    background: linear-gradient(90deg,
+                        transparent 0%,
+                        rgba(255, 255, 255, 0.15) 50%,
+                        transparent 100%);
+                }
+                
+                .route-option:hover {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.09) 0%,
+                        rgba(255, 255, 255, 0.05) 50%,
+                        rgba(0, 0, 0, 0.1) 100%);
+                    border-color: rgba(255, 255, 255, 0.15);
+                    transform: translateY(-3px);
+                    box-shadow:
+                        0 12px 32px rgba(0, 0, 0, 0.35),
+                        0 4px 12px rgba(0, 0, 0, 0.2),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                }
+                
+                .route-option.active {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.12) 0%,
+                        rgba(255, 255, 255, 0.07) 50%,
+                        rgba(0, 0, 0, 0.05) 100%);
+                    border-color: rgba(255, 255, 255, 0.18);
+                    transform: translateY(-1px);
+                    box-shadow:
+                        0 8px 28px rgba(0, 0, 0, 0.3),
+                        0 3px 10px rgba(0, 0, 0, 0.18),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.18);
+                }
+                
+                /* Bubble animations */
+                @keyframes fadeInStagger {
+                    from { opacity: 0; transform: translateY(20px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+                
+                .nav-layout.active .routes-panel h2 {
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.3s forwards;
+                }
+                
+                .nav-layout.active .routes-panel .search-bar {
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.4s forwards;
+                }
+                
+                .nav-layout.active .route-option:nth-child(3) {
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.5s forwards;
+                }
+                
+                .nav-layout.active .route-option:nth-child(4) {
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.6s forwards;
+                }
+                
+                .nav-layout.active .route-option:nth-child(5) {
+                    animation: fadeInStagger 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.7s forwards;
+                }
+
+                /* Measurement helper to get accurate target rect */
+                .search-screen.measure { opacity: 0; pointer-events: none; }
+                .search-screen.measure .search-container { transform: none; opacity: 1; }
+
+                /* Enhanced glass search container */
+                .search-container {
+                    position: relative;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center; /* center the input and dropdown */
+                    backdrop-filter: blur(25px) saturate(180%);
+                    -webkit-backdrop-filter: blur(25px) saturate(180%);
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(255, 255, 255, 0.04) 50%,
+                        rgba(0, 0, 0, 0.15) 100%);
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    border-radius: 28px;
+                    padding: 24px 40px;
+                    box-shadow:
+                        0 16px 40px rgba(0, 0, 0, 0.6),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+                    transform: scale(0.88);
+                    opacity: 0;
+                    transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1.1), opacity 0.45s ease;
+                    /* Ensure dropdown can extend outside */
+                    overflow: visible;
+                }
+                .search-screen.active .search-container {
+                    transform: scale(1);
+                    opacity: 1;
+                }
+
+                /* Enhanced glass search input */
+                .search-container input {
+                    font-family: Consolas, 'JetBrains Mono', monospace;
+                    font-size: 18px;
+                    color: rgba(255, 255, 255, 0.95);
+                    background: transparent;
+                    border: none;
+                    outline: none;
+                    width: 360px;
+                    text-align: center;
+                    letter-spacing: 0.02em;
+                    text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
+                    position: relative; /* Add relative positioning for dropdown anchor */
+                }
+                .search-container input::placeholder {
+                    color: rgba(255, 255, 255, 0.4);
+                    text-shadow: none;
+                }
+
+                /* Pulse animation on keystroke */
+                @keyframes pulse {
+                    0% { transform: scale(1); }
+                    50% { transform: scale(1.035); }
+                    100% { transform: scale(1); }
+                }
+                .search-container.pulse {
+                    animation: pulse 0.18s ease;
+                }
+                
+                /* Autocomplete dropdown styling */
+                .autocomplete-dropdown {
+                    position: absolute;
+                    top: calc(100% + 10px); /* Position below the search-container */
+                    left: 50%;
+                    /* Keep centered under the input at all times */
+                    min-width: 360px; /* match input width */
+                    max-width: 480px; /* allow a bit wider */
+                    width: 90%; /* responsive inside container */
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(255, 255, 255, 0.04) 50%,
+                        rgba(0, 0, 0, 0.15) 100%);
+                    backdrop-filter: blur(25px) saturate(180%);
+                    -webkit-backdrop-filter: blur(25px) saturate(180%);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-top: none;
+                    border-radius: 0 0 25px 25px;
+                    max-height: 320px;
+                    overflow-y: auto;
+                    opacity: 0;
+                    visibility: hidden;
+                    /* Center X and animate Y/scale */
+                    transform: translate(-50%, -15px) scale(0.95);
+                    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+                    box-shadow: 
+                        0 15px 50px rgba(0, 0, 0, 0.6),
+                        0 5px 20px rgba(0, 0, 0, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                    z-index: 50000; /* Ensure above all UI, but under any system overlays */
+                    scrollbar-width: none;
+                    -ms-overflow-style: none;
+                    pointer-events: none;
+                    /* Blob connection effect */
+                    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+                    /* Add a pseudo-element for the blob connection */
+                }
+                .autocomplete-section-header {
+                    padding: 10px 14px 6px 14px;
+                    font-size: 12px;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    color: rgba(255,255,255,0.5);
+                }
+                .autocomplete-badge {
+                    display: inline-block;
+                    margin-left: 8px;
+                    padding: 2px 6px;
+                    font-size: 10px;
+                    letter-spacing: 0.06em;
+                    border: 1px solid rgba(255,255,255,0.15);
+                    border-radius: 6px;
+                    color: rgba(255,255,255,0.7);
+                    background: rgba(255,255,255,0.06);
+                }
+                
+                .autocomplete-dropdown::before {
+                    content: '';
+                    position: absolute;
+                    top: -12px; /* Position above the dropdown to create blob connection */
+                    left: 50%;
+                    transform: translateX(-50%);
+                    width: 60%;
+                    height: 15px;
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.08) 0%,
+                        rgba(255, 255, 255, 0.04) 50%,
+                        rgba(0, 0, 0, 0.15) 100%);
+                    backdrop-filter: blur(25px);
+                    border-radius: 15px 15px 0 0;
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-bottom: none;
+                    opacity: 0;
+                    transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+                    z-index: 14999; /* Just below the dropdown */
+                }
+                
+                .autocomplete-dropdown::-webkit-scrollbar {
+                    width: 0px;
+                    background: transparent;
+                }
+                
+                .autocomplete-dropdown.show {
+                    opacity: 1;
+                    visibility: visible;
+                    /* Preserve X-centering while revealing */
+                    transform: translate(-50%, 0) scale(1);
+                    pointer-events: auto;
+                    animation: blobAppear 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+                }
+                
+                .autocomplete-dropdown.show::before {
+                    opacity: 1;
+                    animation: blobConnector 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s both;
+                }
+                
+                @keyframes blobAppear {
+                    0% {
+                        opacity: 0;
+                        transform: translateY(-20px) scale(0.9);
+                        border-radius: 25px 25px 25px 25px;
+                        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+                    }
+                    20% {
+                        border-radius: 20px 20px 25px 25px;
+                        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+                    }
+                    50% {
+                        border-radius: 10px 10px 25px 25px;
+                        box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
+                    }
+                    80% {
+                        border-radius: 5px 5px 25px 25px;
+                    }
+                    100% {
+                        opacity: 1;
+                        transform: translateY(0) scale(1);
+                        border-radius: 0 0 25px 25px;
+                        box-shadow: 
+                            0 15px 50px rgba(0, 0, 0, 0.6),
+                            0 5px 20px rgba(0, 0, 0, 0.4),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                    }
+                }
+                
+                @keyframes blobConnector {
+                    0% {
+                        width: 20%;
+                        height: 6px;
+                        opacity: 0;
+                        border-radius: 10px 10px 0 0;
+                    }
+                    30% {
+                        width: 40%;
+                        height: 10px;
+                        opacity: 0.5;
+                        border-radius: 12px 12px 0 0;
+                    }
+                    60% {
+                        width: 80%;
+                        height: 18px;
+                        opacity: 0.8;
+                        border-radius: 15px 15px 0 0;
+                    }
+                    100% {
+                        width: 60%;
+                        height: 12px;
+                        opacity: 1;
+                        border-radius: 15px 15px 0 0;
+                    }
+                }
+                
+                /* Add a subtle pulsing effect for loading */
+                .autocomplete-dropdown.loading {
+                    animation: pulse 1.5s ease-in-out infinite;
+                }
+                
+                @keyframes pulse {
+                    0%, 100% {
+                        box-shadow: 
+                            0 15px 50px rgba(0, 0, 0, 0.6),
+                            0 5px 20px rgba(0, 0, 0, 0.4),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                    }
+                    50% {
+                        box-shadow: 
+                            0 15px 50px rgba(0, 0, 0, 0.8),
+                            0 5px 20px rgba(0, 0, 0, 0.6),
+                            inset 0 1px 0 rgba(255, 255, 255, 0.25);
+                    }
+                }
+                
+                /* Morphed dropdown for the center input */
+                .morphed-dropdown {
+                    /* Use fixed so it can span the page, but let inline styles control left/top/width */
+                    position: fixed;
+                }
+                
+                .autocomplete-item {
+                    padding: 18px 24px;
+                    cursor: pointer;
+                    color: rgba(255, 255, 255, 0.85);
+                    font-size: 15px;
+                    font-family: 'Inter', sans-serif;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                    position: relative;
+                    overflow: hidden;
+                }
+                
+                .autocomplete-item::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: -100%;
+                    width: 100%;
+                    height: 100%;
+                    background: linear-gradient(90deg,
+                        transparent,
+                        rgba(255, 255, 255, 0.1),
+                        transparent
+                    );
+                    transition: left 0.5s ease;
+                }
+                
+                .autocomplete-item:last-child {
+                    border-bottom: none;
+                    border-radius: 0 0 25px 25px;
+                }
+                
+                .autocomplete-item:hover, 
+                .autocomplete-item.selected {
+                    background: linear-gradient(135deg,
+                        rgba(255, 255, 255, 0.15) 0%,
+                        rgba(255, 255, 255, 0.08) 100%);
+                    color: rgba(255, 255, 255, 1);
+                    transform: translateX(6px);
+                    box-shadow: inset 3px 0 0 rgba(255, 255, 255, 0.4);
+                }
+                
+                .autocomplete-item:hover::before {
+                    left: 100%;
+                }
+                
+                .autocomplete-item:active {
+                    transform: translateX(6px) scale(0.98);
+                    transition: all 0.1s ease;
+                }
+                
+                .autocomplete-item-main {
+                    font-weight: 500;
+                    color: rgba(255, 255, 255, 0.95);
+                }
+                
+                .autocomplete-item-detail {
+                    font-size: 13px;
+                    color: rgba(255, 255, 255, 0.6);
+                    font-weight: 300;
+                }
+                
+                .autocomplete-loading {
+                    padding: 20px;
+                    text-align: center;
+                    color: rgba(255, 255, 255, 0.6);
+                    font-size: 14px;
+                }
+                
+                .autocomplete-no-results {
+                    padding: 20px;
+                    text-align: center;
+                    color: rgba(255, 255, 255, 0.5);
+                    font-size: 14px;
+                    font-style: italic;
+                }
+
+                /* Morph proxy used for seamless transition */
+                .morph-proxy {
+                    position: fixed;
+                    z-index: 10;
+                    backdrop-filter: blur(20px) saturate(180%);
+                    -webkit-backdrop-filter: blur(20px) saturate(180%);
+                    background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(0,0,0,0.12));
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+                    border-radius: 28px;
+                    pointer-events: none;
+                }
+                
+                /* Special styling for different proxy types */
+                .search-proxy {
+                    background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(0,0,0,0.12));
+                }
+                
+                .map-proxy {
+                    background: #0f0f11;
+                    border-left: 1px solid rgba(255, 255, 255, 0.1);
+                }
+
+                /* Enhanced search background gradient that fades in */
+                body.show-search::after {
+                    content: "";
+                    position: fixed;
+                    inset: 0;
+                    z-index: 1;
+                    pointer-events: none;
+                    background: none;
+                    opacity: 0;
+                    transition: opacity 1.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+                }
+
+                body.show-search.search-active::after {
+                    opacity: 0;
+                }
+
+                /* Enhanced noise overlay for search mode */
+                body.show-search.search-active::before {
+                    background-image: none;
+                    opacity: 0;
+                }
+
+                @keyframes noiseShift {
+                    0% { background-position: 0 0, 1px 1px, 2px 2px, 1.5px 0.5px; }
+                    25% { background-position: 2px 1px, 3px 2px, 4px 3px, 3.5px 1.5px; }
+                    50% { background-position: 1px 3px, 2px 4px, 3px 5px, 2.5px 3.5px; }
+                    75% { background-position: 3px 2px, 4px 3px, 5px 4px, 4.5px 2.5px; }
+                    100% { background-position: 0 0, 1px 1px, 2px 2px, 1.5px 0.5px; }
+                }
+
+                /* Custom marker animations */
+                @keyframes markerPulse {
+                    0% { transform: scale(1); opacity: 1; }
+                    50% { transform: scale(1.2); opacity: 0.8; }
+                    100% { transform: scale(1); opacity: 1; }
+                }
+
+                .custom-start-marker {
+                    animation: markerPulse 2s ease-in-out infinite;
+                }
+
+                /* Route highlighting */
+                .route-highlighted {
+                    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.8));
+                    opacity: 1 !important;
+                }
+
+                .route-normal {
+                    opacity: 0.7;
+                }
+
+                /* PIN entry styles */
+                .pin-container {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                    width: 320px;
+                    margin: 0 auto;
+                    pointer-events: auto;
+                }
+                .pin-label {
+                    font-size: 12px;
+                    color: rgba(255,255,255,0.6);
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    text-align: left;
+                }
+                .pin-input {
+                    width: 100%;
+                    height: 48px;
+                    border-radius: 12px;
+                    border: 1px solid rgba(255,255,255,0.15);
+                    background: rgba(0,0,0,0.25);
+                    color: #fff;
+                    font-size: 20px;
+                    letter-spacing: 0.25em;
+                    text-align: center;
+                    outline: none;
+                    transition: border-color 0.2s ease, background 0.2s ease;
+                }
+                .pin-input:focus {
+                    border-color: rgba(100, 200, 255, 0.6);
+                    background: rgba(0,0,0,0.35);
+                }
+                .pin-actions { display: flex; gap: 12px; }
+                .btn {
+                    flex: 1;
+                    height: 44px;
+                    border-radius: 10px;
+                    border: 1px solid rgba(255,255,255,0.2);
+                    background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(0,0,0,0.25));
+                    color: #fff;
+                    font-weight: 600;
+                    letter-spacing: 0.05em;
+                    cursor: pointer;
+                }
+                .btn:hover { filter: brightness(1.1); }
+                .pin-error { color: #ff6b6b; font-size: 12px; min-height: 16px; text-align: center; }
+            </style>
+        </head>
+        <body>
+            <div id="toastContainer" class="toast-container"></div>
+            <canvas></canvas>
+
+            <!-- Include Leaflet CSS and JS for mapping -->
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+            <div class="overlay">
+                <div class="glass-container">
+                    <div class="title">driver</div>
+                    <div class="subtitle">Built to Think. Born to Drive.</div>
+                    <div class="pin-container" id="pinContainer">
+                        <div class="pin-label" id="pinLabel">Enter key</div>
+                        <input type="password" maxlength="12" pattern="[A-Za-z0-9]{4,12}" class="pin-input" id="pinInput" placeholder="Enter key" />
+                        <input type="password" maxlength="12" pattern="[A-Za-z0-9]{4,12}" class="pin-input" id="pinConfirm" placeholder="Confirm key" style="display:none;" />
+                        <div class="pin-error" id="pinError"></div>
+                        <div class="pin-actions">
+                            <button class="btn" id="pinPrimary">Continue</button>
+                            <button class="btn" id="pinAlt" style="display:none;">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="search-screen" id="searchScreen">
+                <div class="search-container">
+                    <input type="text" id="searchInput" placeholder="Enter destination address" />
+                    <div class="autocomplete-dropdown" id="autocompleteDropdown">
+                        <!-- Autocomplete suggestions will be populated here -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="nav-layout" id="navLayout">
+                <div class="routes-panel">
+                    <div class="navigation-header">
+                        <div class="back-button" id="backButton">
+                            <span class="icon">←</span>
+                        </div>
+                        <div class="navigation-title">
+                            <div class="title-location">Route to</div>
+                            <div class="destination" id="destinationDisplay">Destination</div>
+                        </div>
+                    </div>
+
+                    <div class="search-bar-container">
+                        <div class="search-bar" id="searchBar"></div>
+                        <div class="search-actions">
+                            <div class="edit-button" id="editDestination">Edit</div>
+                        </div>
+                    </div>
+
+                    <div class="journey-details">
+                        <div class="journey-time">
+                            <div class="eta">Arrive by 9:45 AM</div>
+                            <div class="depart-info">Depart now</div>
+                        </div>
+                    </div>
+
+                    <div class="route-options">
+                        <h3>Suggested Routes</h3>
+                        <div class="route-option active">
+                            <div class="route-header">
+                                <div class="route-type">Fastest Route</div>
+                                <div class="route-time">28 min</div>
+                            </div>
+                            <div class="route-path">
+                                <div class="route-line">
+                                    <div class="path-dot start"></div>
+                                    <div class="path-line"></div>
+                                    <div class="path-dot traffic-medium"></div>
+                                    <div class="path-line traffic-light"></div>
+                                    <div class="path-dot end"></div>
+                                </div>
+                                <div class="route-details">
+                                    <div class="route-distance">14.2 km</div>
+                                    <div class="route-desc">Via Main Highway</div>
+                                    <div class="route-conditions">Usual traffic</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="route-option">
+                            <div class="route-header">
+                                <div class="route-type">Scenic Route</div>
+                                <div class="route-time">32 min</div>
+                            </div>
+                            <div class="route-path">
+                                <div class="route-line">
+                                    <div class="path-dot start"></div>
+                                    <div class="path-line"></div>
+                                    <div class="path-dot"></div>
+                                    <div class="path-line"></div>
+                                    <div class="path-dot end"></div>
+                                </div>
+                                <div class="route-details">
+                                    <div class="route-distance">15.8 km</div>
+                                    <div class="route-desc">Via Coastal Drive</div>
+                                    <div class="route-conditions">Less traffic</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="route-option">
+                            <div class="route-header">
+                                <div class="route-type">Eco Route</div>
+                                <div class="route-time">30 min</div>
+                            </div>
+                            <div class="route-path">
+                                <div class="route-line">
+                                    <div class="path-dot start"></div>
+                                    <div class="path-line traffic-light"></div>
+                                    <div class="path-dot"></div>
+                                    <div class="path-line"></div>
+                                    <div class="path-dot end"></div>
+                                </div>
+                                <div class="route-details">
+                                    <div class="route-distance">13.5 km</div>
+                                    <div class="route-desc">Best fuel efficiency</div>
+                                    <div class="route-conditions">Fewer stops</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="start-navigation">
+                        <button class="start-button" id="startNavigation">Start</button>
+                    </div>
+                </div>
+                
+                <div class="map-container">
+                    <div id="blackFade"></div>
+                    <div class="map-ui-overlay">
+                        <div class="map-controls">
+                            <div class="map-control zoom-in">+</div>
+                            <div class="map-control zoom-out">−</div>
+                        </div>
+                        <div class="current-location">
+                            <div class="map-control my-location">
+                                <span class="location-icon">◎</span>
+                            </div>
+                        </div>
+                        <div class="compass">
+                            <div class="map-control compass-control">
+                                <span class="compass-icon">↑</span>
+                            </div>
+                        </div>
+                        <div class="route-preview">
+                            <div class="route-segment highway">
+                                <div class="segment-name">Main Highway</div>
+                                <div class="segment-distance">8.2 km</div>
+                            </div>
+                            <div class="route-segment local">
+                                <div class="segment-name">Downtown Ave</div>
+                                <div class="segment-distance">4.5 km</div>
+                            </div>
+                            <div class="route-segment final">
+                                <div class="segment-name">Tech Center Rd</div>
+                                <div class="segment-distance">1.5 km</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="map-placeholder" id="mapView">
+                        <!-- Leaflet map container -->
+                        <div id="leafletMap" style="width: 100%; height: 100%; border-radius: 20px; overflow: hidden;"></div>
+                        <!-- Route overlay SVG -->
+                        <svg id="routeOverlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000;">
+                            <!-- Route paths will be drawn here -->
+                        </svg>
+                        <!-- Location markers -->
+                        <div class="current-location-marker" id="currentLocation"></div>
+                        <div class="destination-marker" id="destinationMarker"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tos-container">
+                <div class="tos-text">
+                    By using this application, you agree to our <a href="#" onclick="return false;">Terms of Service</a> and <a href="#" onclick="return false;">Privacy Policy</a>.<br>
+                    This software is provided "as is" without warranty. Use at your own risk. © 2025 Driver AI.
+                </div>
+            </div>
+
+            <div class="clickable-area" onclick="handleClick()"
+                 onmousemove="forwardMouseEvent(event)"
+                 onmousedown="forwardMouseEvent(event)"
+                 onmouseup="forwardMouseEvent(event)"
+                 style="pointer-events: none;"></div>
+
+            <script>
+                /* %%FLUID_JS%% */
+
+                function handleClick() {
+                    // Send click event to PyQt
+                    if (window.pyqtBridge) {
+                        window.pyqtBridge.clicked();
+                    }
+                    console.log('Clicked!');
+                }
+
+                // PIN gate logic
+                function getEl(id) { return document.getElementById(id); }
+                const pinInput = getEl('pinInput');
+                const pinConfirm = getEl('pinConfirm');
+                const pinError = getEl('pinError');
+                const pinLabel = getEl('pinLabel');
+                const pinPrimary = getEl('pinPrimary');
+                const pinAlt = getEl('pinAlt');
+
+                function setError(msg) { pinError.textContent = msg || ''; }
+                function isValidPin(p) {
+                    return typeof p === 'string' && /^[A-Za-z0-9]{4,12}$/.test(p);
+                }
+                // Global gate flag: only true after a successful key set/verify
+                window.keyGateUnlocked = false;
+                function showCreateMode() {
+                    pinLabel.textContent = 'Create key';
+                    pinConfirm.style.display = '';
+                    pinAlt.style.display = 'none';
+                    pinPrimary.textContent = 'Save key';
+                }
+                function showEnterMode() {
+                    pinLabel.textContent = 'Enter key';
+                    pinConfirm.style.display = 'none';
+                    pinAlt.style.display = 'none';
+                    pinPrimary.textContent = 'Continue';
+                }
+                async function transitionToSearch() {
+                    try {
+                        if (!window.keyGateUnlocked) {
+                            console.warn('Blocked transitionToSearch: key gate not unlocked');
+                            return;
+                        }
+                        // Ensure we're showing the search screen and not the nav layout
+                        document.body.classList.add('show-search');
+                        const searchScreen = document.getElementById('searchScreen');
+                        const navLayout = document.getElementById('navLayout');
+                        if (navLayout) {
+                            navLayout.classList.remove('active');
+                            navLayout.style.pointerEvents = 'none';
+                            navLayout.style.opacity = navLayout.style.opacity || '0';
+                        }
+                        if (searchScreen) {
+                            searchScreen.classList.add('active');
+                        }
+                        setTimeout(() => {
+                            const searchInput = document.getElementById('searchInput');
+                            if (searchInput) searchInput.focus();
+                        }, 250);
+                    } catch (e) { console.error(e); }
+                }
+                async function checkPinStateAndSetup() {
+                    try {
+                        const hasBackend = window.backend && typeof window.backend.has_pin === 'function';
+                        if (!hasBackend) {
+                            setTimeout(checkPinStateAndSetup, 300);
+                            return;
+                        }
+                        const firstRun = !(await window.backend.has_pin());
+                        if (firstRun) { showCreateMode(); } else { showEnterMode(); }
+                    } catch (e) {
+                        console.error('checkPinState error:', e);
+                        showEnterMode();
+                    }
+                }
+                async function handlePrimary() {
+                    setError('');
+                    const p = pinInput.value.trim();
+                    const createMode = pinConfirm.style.display !== 'none';
+                    if (!isValidPin(p)) { setError('Key must be 4–12 letters/numbers (no symbols)'); return; }
+                    if (createMode) {
+                        const c = pinConfirm.value.trim();
+                        if (p !== c) { setError('Keys do not match'); return; }
+                        try {
+                            const ok = await window.backend.set_pin(p);
+                            if (!ok) { setError('Unable to save key'); return; }
+                            window.keyGateUnlocked = true;
+                            await transitionToSearch();
+                        } catch (e) { setError('Error saving key'); }
+                    } else {
+                        try {
+                            const ok = await window.backend.verify_pin(p);
+                            if (!ok) { setError('Incorrect key'); return; }
+                            window.keyGateUnlocked = true;
+                            await transitionToSearch();
+                        } catch (e) { setError('Error verifying key'); }
+                    }
+                }
+                pinPrimary && pinPrimary.addEventListener('click', handlePrimary);
+                [pinInput, pinConfirm].forEach(el => {
+                    if (el) {
+                        el.addEventListener('keydown', (e) => {
+                            if (e.key === 'Enter') { handlePrimary(); }
+                        });
+                    }
+                });
+
+                // Enhanced mapping and routing functionality
+                let map = null;
+                let routeLayers = [];
+                let currentLocationMarker = null;
+                let destinationMarker = null;
+                // Recent addresses state
+                const RECENTS_KEY = 'driver_recent_addresses_v1';
+                const RECENTS_LIMIT = 8;
+                function loadRecents() {
+                    try {
+                        const raw = localStorage.getItem(RECENTS_KEY);
+                        const arr = raw ? JSON.parse(raw) : [];
+                        return Array.isArray(arr) ? arr.filter(x => typeof x === 'string' && x.trim()) : [];
+                    } catch { return []; }
+                }
+                function saveRecents(list) {
+                    try { localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, RECENTS_LIMIT))); } catch {}
+                }
+                function addRecent(address) {
+                    if (!address || typeof address !== 'string') return;
+                    const val = address.trim();
+                    if (!val) return;
+                    const list = loadRecents();
+                    const existingIdx = list.findIndex(x => x.toLowerCase() === val.toLowerCase());
+                    if (existingIdx !== -1) list.splice(existingIdx, 1);
+                    list.unshift(val);
+                    saveRecents(list);
+                }
+                
+                // Fixed start location: 22 Macleans Road
+                const START_LOCATION = {
+                    address: "22 Macleans Road, Auckland, New Zealand",
+                    coords: null // Will be geocoded
+                };
+
+                // Initialize the map when navigation screen loads
+                function initializeMap() {
+                    console.log('Initializing map...');
+
+                    // Clean up existing map
+                    if (map) {
+                        try {
+                            map.remove();
+                        } catch (e) {
+                            console.warn('Error removing existing map:', e);
+                        }
+                        map = null;
+                    }
+
+                    // Wait for the map container to be visible
+                    const mapContainer = document.getElementById('leafletMap');
+                    if (!mapContainer) {
+                        console.error('Map container not found');
+                        return;
+                    }
+
+                    // Create map centered on Auckland with better zoom
+                    map = L.map('leafletMap', {
+                        center: [-36.8485, 174.7633], // Auckland center
+                        zoom: 13, // Better initial zoom
+                        zoomControl: true,
+                        attributionControl: false,
+                        fadeAnimation: true,
+                        zoomAnimation: true
+                    });
+
+                    // Add dark themed tile layer with better styling
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                        subdomains: 'abcd',
+                        maxZoom: 19,
+                        minZoom: 8
+                    }).addTo(map);
+
+                    console.log('Map initialized successfully');
+
+                    // Force a resize to ensure proper rendering
+                    setTimeout(() => {
+                        if (map) {
+                            map.invalidateSize();
+                        }
+                    }, 100);
+                }
+
+                // Geocode an address using Nominatim
+                async function geocodeAddress(address) {
+                    const encodedAddress = encodeURIComponent(address);
+                    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodedAddress}&limit=1&countrycodes=nz`;
+                    
+                    try {
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        
+                        if (data && data.length > 0) {
+                            return {
+                                lat: parseFloat(data[0].lat),
+                                lng: parseFloat(data[0].lon),
+                                display_name: data[0].display_name
+                            };
+                        }
+                        return null;
+                    } catch (error) {
+                        console.error('Geocoding failed:', error);
+                        return null;
+                    }
+                }
+
+                // Get routing between two points using OSRM
+                async function getRoutes(startCoords, endCoords) {
+                    const routes = [];
+                    
+                    // Define multiple routing profiles for variety
+                    const profiles = [
+                        { name: 'driving', type: 'Fastest Route', color: '#00ff88', style: 'fastest' },
+                        { name: 'driving', type: 'Alternative Route', color: '#3399ff', style: 'scenic' },
+                        { name: 'cycling', type: 'Eco Route', color: '#ffaa00', style: 'eco' }
+                    ];
+
+                    for (let i = 0; i < profiles.length; i++) {
+                        const profile = profiles[i];
+                        const alternatives = i > 0 ? '&alternatives=true' : '';
+                        const url = `https://router.project-osrm.org/route/v1/${profile.name}/${startCoords.lng},${startCoords.lat};${endCoords.lng},${endCoords.lat}?overview=full&geometries=geojson${alternatives}`;
+                        
+                        try {
+                            const response = await fetch(url);
+                            if (!response.ok) {
+                                console.warn(`Routing API HTTP error for ${profile.type}:`, response.status);
+                                continue;
+                            }
+                            const data = await response.json();
+                            // OSRM returns { code: 'Ok', routes: [...] } on success
+                            if (data && data.code === 'Ok' && Array.isArray(data.routes) && data.routes.length > 0) {
+                                const routeData = data.routes[i < data.routes.length ? i : 0];
+                                const route = {
+                                    type: profile.type,
+                                    geometry: routeData.geometry,
+                                    distance: (routeData.distance / 1000).toFixed(1) + ' km',
+                                    duration: Math.round(routeData.duration / 60) + ' min',
+                                    color: profile.color,
+                                    style: profile.style,
+                                    description: profile.type === 'Fastest Route' ? 'Via Main Roads' : 
+                                               profile.type === 'Alternative Route' ? 'Via Scenic Route' : 
+                                               'Best Fuel Efficiency'
+                                };
+                                routes.push(route);
+                            } else {
+                                console.warn(`Routing API returned no routes for ${profile.type}`);
+                            }
+                        } catch (error) {
+                            console.warn(`Failed to get ${profile.type}:`, error);
+                            // Do not fabricate routes; simply skip this profile
+                        }
+                    }
+                    
+                    return routes;
+                }
+
+                // Calculate distance between two coordinates (Haversine formula)
+                function calculateDistance(lat1, lon1, lat2, lon2) {
+                    const R = 6371; // Earth's radius in kilometers
+                    const dLat = (lat2 - lat1) * Math.PI / 180;
+                    const dLon = (lon2 - lon1) * Math.PI / 180;
+                    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                              Math.sin(dLon/2) * Math.sin(dLon/2);
+                    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                    return R * c;
+                }
+
+                // Display routes on the map
+                function displayLeafletRoutes(routes, startCoords, endCoords) {
+                    console.log('Displaying routes:', routes.length);
+
+                    // Store routes globally for selection
+                    window.availableRoutes = routes;
+
+                    // Clear existing routes
+                    routeLayers.forEach(layer => {
+                        if (map && map.hasLayer(layer)) {
+                            map.removeLayer(layer);
+                        }
+                    });
+                    routeLayers = [];
+
+                    // Add route paths to map
+                    routes.forEach((route, index) => {
+                        if (route.geometry && route.geometry.coordinates) {
+                            const latLngs = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+
+                            const polyline = L.polyline(latLngs, {
+                                color: route.color,
+                                weight: index === 0 ? 6 : 4, // Make fastest route thicker
+                                opacity: 0.9,
+                                className: `route-${route.style}`,
+                                dashArray: route.style === 'scenic' ? '8, 4' :
+                                          route.style === 'eco' ? '4, 8, 2, 8' : null,
+                                lineCap: 'round',
+                                lineJoin: 'round'
+                            }).addTo(map);
+
+                            routeLayers.push(polyline);
+
+                            // Add route popup with better styling
+                            polyline.bindPopup(`
+                                <div style="background: rgba(0,0,0,0.9); color: white; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); font-family: 'Inter', sans-serif;">
+                                    <strong style="color: ${route.color};">${route.type}</strong><br>
+                                    <span style="color: ${route.color};">●</span> ${route.distance} • ${route.duration}<br>
+                                    <em style="font-size: 12px; color: rgba(255,255,255,0.7);">${route.description}</em>
+                                </div>
+                            `);
+
+                            // Add click handler to highlight route
+                            polyline.on('click', () => {
+                                highlightRoute(index);
+                            });
+                        }
+                    });
+
+                    // Add markers with better styling
+                    if (currentLocationMarker) {
+                        map.removeLayer(currentLocationMarker);
+                    }
+                    if (destinationMarker) {
+                        map.removeLayer(destinationMarker);
+                    }
+
+                    // Custom start marker with glow effect
+                    const startIcon = L.divIcon({
+                        className: 'custom-start-marker',
+                        html: `<div style="width: 24px; height: 24px; background: radial-gradient(circle, #00ff88 0%, #00cc66 70%, #009944 100%); border: 3px solid white; border-radius: 50%; box-shadow: 0 0 20px rgba(0,255,136,0.8), 0 0 40px rgba(0,255,136,0.4); animation: markerPulse 2s ease-in-out infinite;"></div>`,
+                        iconSize: [30, 30],
+                        iconAnchor: [15, 15]
+                    });
+
+                    // Custom destination marker
+                    const destIcon = L.divIcon({
+                        className: 'custom-dest-marker',
+                        html: `<div style="width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-bottom: 18px solid #ff3366; transform: translateY(-18px); filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5)); border-bottom-color: #ff3366;"></div>`,
+                        iconSize: [24, 18],
+                        iconAnchor: [12, 18]
+                    });
+
+                    currentLocationMarker = L.marker([startCoords.lat, startCoords.lng], { icon: startIcon })
+                        .addTo(map)
+                        .bindPopup(`<strong style="color: #00ff88;">Start Location</strong><br>${START_LOCATION.address}`);
+
+                    destinationMarker = L.marker([endCoords.lat, endCoords.lng], { icon: destIcon })
+                        .addTo(map)
+                        .bindPopup(`<strong style="color: #ff3366;">Destination</strong><br>${endCoords.address || 'Selected Location'}`);
+
+                    // Fit map to show all routes with better padding
+                    if (routeLayers.length > 0) {
+                        const group = new L.featureGroup([...routeLayers, currentLocationMarker, destinationMarker]);
+                        map.fitBounds(group.getBounds().pad(0.15)); // More padding for better view
+
+                        // Ensure minimum zoom level for detail
+                        const currentZoom = map.getZoom();
+                        if (currentZoom < 12) {
+                            map.setZoom(12);
+                        }
+                    }
+
+                    // Update route options in sidebar
+                    updateRouteOptions(routes);
+
+                    console.log('Routes displayed successfully');
+                }
+
+                // Update the route options in the sidebar
+                function updateRouteOptions(routes) {
+                    const routeOptionsContainer = document.querySelector('.route-options');
+                    if (!routeOptionsContainer) return;
+
+                    // Clear existing route options (keep the header)
+                    const existingOptions = routeOptionsContainer.querySelectorAll('.route-option');
+                    existingOptions.forEach(option => option.remove());
+
+                    // Add new route options
+                    routes.forEach((route, index) => {
+                        const routeElement = document.createElement('div');
+                        routeElement.className = `route-option ${index === 0 ? 'active' : ''}`;
+                        routeElement.innerHTML = `
+                            <div class="route-header">
+                                <div class="route-type">${route.type}</div>
+                                <div class="route-time">${route.duration}</div>
+                            </div>
+                            <div class="route-path">
+                                <div class="route-line">
+                                    <div class="path-dot start"></div>
+                                    <div class="path-line" style="background: ${route.color};"></div>
+                                    <div class="path-dot end"></div>
+                                </div>
+                                <div class="route-details">
+                                    <div class="route-distance">${route.distance}</div>
+                                    <div class="route-desc">${route.description}</div>
+                                    <div class="route-conditions">Live traffic</div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Add click handler to highlight route
+                        routeElement.addEventListener('click', () => {
+                            // Remove active class from all routes
+                            routeOptionsContainer.querySelectorAll('.route-option').forEach(opt => 
+                                opt.classList.remove('active'));
+                            // Add active class to clicked route
+                            routeElement.classList.add('active');
+                            
+                            // Get route index
+                            const routeIndex = index;
+                            
+                            // Notify Python of selection
+                            if (window.pyqtBridge) {
+                                window.pyqtBridge.setSelectedRoute(window.availableRoutes[routeIndex]);
+                                window.pyqtBridge.routeSelected(routeIndex);
+                            }
+                            
+                            // Highlight the corresponding route on map
+                            highlightRoute(index);
+                        });
+                        
+                        routeOptionsContainer.appendChild(routeElement);
+                    });
+                }
+
+                // Highlight a specific route on the map
+                function highlightRoute(routeIndex) {
+                    routeLayers.forEach((layer, index) => {
+                        if (index === routeIndex) {
+                            layer.setStyle({ weight: 6, opacity: 1 });
+                            layer.bringToFront();
+                        } else {
+                            layer.setStyle({ weight: 4, opacity: 0.6 });
+                        }
+                    });
+                }
+
+                // Main function to show routes from start to destination
+                async function showRoutesToDestination(destinationAddress) {
+                    console.log('Showing routes to:', destinationAddress);
+                    
+                    if (!map) {
+                        initializeMap();
+                        // Wait a moment for map to initialize
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+
+                    try {
+                        // Geocode start location if not already done
+                        if (!START_LOCATION.coords) {
+                            console.log('Geocoding start location:', START_LOCATION.address);
+                            START_LOCATION.coords = await geocodeAddress(START_LOCATION.address);
+                            if (!START_LOCATION.coords) {
+                                console.error('Failed to geocode start location');
+                                showToast('Could not determine the start location. Please check your connection and try again.', 'error');
+                                return;
+                            }
+                        }
+
+                        // Geocode destination
+                        console.log('Geocoding destination:', destinationAddress);
+                        const destCoords = await geocodeAddress(destinationAddress);
+                        if (!destCoords) {
+                            console.error('Failed to geocode destination');
+                            // Show error in UI
+                            showToast('Could not find the destination address. Please try a different address.', 'error');
+                            return;
+                        }
+
+                        console.log('Start coords:', START_LOCATION.coords);
+                        console.log('Destination coords:', destCoords);
+
+                        // Get multiple routes
+                        const routes = await getRoutes(START_LOCATION.coords, destCoords);
+                        console.log('Found routes:', routes.length);
+
+                        if (routes.length > 0) {
+                            destCoords.address = destinationAddress;
+                            displayLeafletRoutes(routes, START_LOCATION.coords, destCoords);
+                        } else {
+                            console.error('No routes found');
+                            showToast('Could not find a route to that destination (road not found).', 'error');
+                        }
+
+                    } catch (error) {
+                        console.error('Error in showRoutesToDestination:', error);
+                        showToast('An error occurred while planning the route. Please try again.', 'error');
+                    }
+                }
+                let autocompleteTimeout;
+                let selectedIndex = -1;
+                let currentSuggestions = [];
+                
+                async function fetchAddressSuggestions(query) {
+                    if (query.length < 2) {
+                        hideAutocomplete();
+                        return;
+                    }
+                    
+                    console.log('Fetching suggestions for:', query);
+                    
+                    // Show loading state
+                    showAutocompleteLoading();
+                    
+                    // Try multiple CORS proxies and direct API
+                    const corsProxies = [
+                        'https://api.allorigins.win/raw?url=',
+                        'https://corsproxy.io/?',
+                        '' // Direct request (might work in some browsers)
+                    ];
+                    
+                    const baseUrl = `https://nominatim.openstreetmap.org/search?` + 
+                                   `format=json&` +
+                                   `addressdetails=1&` +
+                                   `limit=8&` +
+                                   `countrycodes=nz&` +
+                                   `q=${encodeURIComponent(query)}`;
+                    
+                    let results = null;
+                    
+                    // Try each CORS proxy
+                    for (const proxy of corsProxies) {
+                        try {
+                            const url = proxy + encodeURIComponent(baseUrl);
+                            console.log('Trying URL:', url);
+                            
+                            const response = await fetch(url, {
+                                headers: {
+                                    'User-Agent': 'AddressAutocomplete/1.0',
+                                    'Accept': 'application/json'
+                                }
+                            });
+                            
+                            if (response.ok) {
+                                results = await response.json();
+                                console.log('Successfully got results from:', proxy || 'direct');
+                                break;
+                            } else {
+                                console.log(`Proxy ${proxy || 'direct'} failed with status:`, response.status);
+                            }
+                        } catch (error) {
+                            console.log(`Proxy ${proxy || 'direct'} failed with error:`, error.message);
+                            continue;
+                        }
+                    }
+                    
+                    // If all proxies failed or returned no results, do NOT fabricate suggestions
+                    if (!results || results.length === 0) {
+                        console.log('All API attempts failed or returned no results; showing empty suggestions');
+                        showAutocompleteSuggestions([]);
+                        return;
+                    }
+                    
+                    console.log('API results:', results);
+                    
+                    currentSuggestions = results.map(result => ({
+                        display_name: result.display_name,
+                        name: result.name || result.display_name.split(',')[0],
+                        address: result.display_name,
+                        lat: result.lat,
+                        lon: result.lon,
+                        type: result.type,
+                        class: result.class
+                        }));
+                        
+                        showAutocompleteSuggestions(currentSuggestions);
+                }
+                
+                // Removed mock fallback suggestions to avoid fabricated addresses
+                
+                // Removed legacy fallback suggestions that fabricated addresses
+                
+                function showAutocompleteLoading() {
+                    const dropdown = getOrCreateDropdown();
+                    console.log('Showing loading state, dropdown element:', dropdown);
+                    if (dropdown) {
+                        dropdown.innerHTML = '<div class="autocomplete-loading"> Searching New Zealand addresses...</div>';
+                        dropdown.classList.add('show', 'loading');
+                        console.log('Loading state applied, classes:', dropdown.className);
+                        selectedIndex = -1;
+                    }
+                }
+                
+                function showAutocompleteError() {
+                    const dropdown = getOrCreateDropdown();
+                    console.log('Showing error state');
+                    if (dropdown) {
+                        dropdown.innerHTML = '<div class="autocomplete-no-results">Unable to search addresses at the moment</div>';
+                        dropdown.classList.add('show');
+                        selectedIndex = -1;
+                    }
+                }
+                
+                function showAutocompleteSuggestions(suggestions, opts = {}) {
+                    const dropdown = getOrCreateDropdown();
+                    console.log('Showing suggestions:', suggestions.length, 'dropdown element:', dropdown);
+                    if (!dropdown) return;
+                    
+                    if (suggestions.length === 0) {
+                        dropdown.innerHTML = '<div class="autocomplete-no-results">No addresses found</div>';
+                        dropdown.classList.add('show');
+                        selectedIndex = -1;
+                        return;
+                    }
+                    
+                    const showHeader = !!opts.header;
+                    const headerHtml = showHeader ? `<div class="autocomplete-section-header">${opts.header}</div>` : '';
+                    const html = headerHtml + suggestions.map((suggestion, index) => {
+                        const mainText = suggestion.name;
+                        const detailText = suggestion.address.replace(suggestion.name + ', ', '').replace(', New Zealand', '');
+                        
+                        return `
+                            <div class="autocomplete-item" data-index="${index}">
+                                <div class="autocomplete-item-main">${mainText}${suggestion._recent ? '<span class="autocomplete-badge">Recent</span>' : ''}</div>
+                                <div class="autocomplete-item-detail">${detailText}</div>
+                            </div>
+                        `;
+                    }).join('');
+                    
+                    dropdown.innerHTML = html;
+                    dropdown.classList.add('show');
+                    dropdown.classList.remove('loading'); // Remove loading state
+                    console.log('Suggestions applied, dropdown visible:', dropdown.classList.contains('show'));
+                    selectedIndex = -1;
+                    
+                    // Add click handlers
+                    dropdown.querySelectorAll('.autocomplete-item').forEach((item, index) => {
+                        item.addEventListener('click', () => selectSuggestion(index));
+                    });
+                }
+                
+                function hideAutocomplete() {
+                    const dropdown = document.getElementById('autocompleteDropdown');
+                    const morphedDropdown = document.getElementById('morphedAutocompleteDropdown');
+                    
+                    if (dropdown) {
+                        dropdown.classList.remove('show', 'loading');
+                    }
+                    if (morphedDropdown) {
+                        morphedDropdown.classList.remove('show', 'loading');
+                    }
+                    
+                    selectedIndex = -1;
+                    currentSuggestions = [];
+                }
+                
+                function getOrCreateDropdown() {
+                    // Always use the regular dropdown anchored under the search bar
+                    const dropdown = document.getElementById('autocompleteDropdown');
+                    if (!dropdown) return null;
+                    // Ensure no stale inline styles override CSS positioning/visibility
+                    dropdown.style.left = '';
+                    dropdown.style.top = '';
+                    dropdown.style.width = '';
+                    dropdown.style.right = '';
+                    dropdown.style.bottom = '';
+                    dropdown.style.position = 'absolute';
+                    dropdown.style.transform = '';
+                    dropdown.style.opacity = '';
+                    dropdown.style.visibility = '';
+                    return dropdown;
+                }
+                
+                function selectSuggestion(index) {
+                    if (index >= 0 && index < currentSuggestions.length) {
+                        const suggestion = currentSuggestions[index];
+                        const searchInput = document.getElementById('searchInput');
+                        const centerInput = document.querySelector('.search-container input[type="text"]');
+                        const activeInput = centerInput && centerInput.offsetParent ? centerInput : searchInput;
+                        
+                        console.log('Selecting suggestion:', suggestion.name);
+                        
+                        if (activeInput) {
+                            // Set the input value
+                            activeInput.value = suggestion.name;
+                            
+                            // Add a click animation effect
+                            const dropdown = getOrCreateDropdown();
+                            if (dropdown) {
+                                dropdown.style.transition = 'all 0.2s ease';
+                                dropdown.style.transform = 'translateY(-5px) scale(0.98)';
+                                dropdown.style.opacity = '0.8';
+                                
+                                setTimeout(async () => {
+                                    hideAutocomplete();
+                                    
+                                    // Trigger navigation with the selected address (like pressing enter)
+                                    console.log('Triggering navigation to:', suggestion.name);
+                                    // Save to recents
+                                    addRecent(suggestion.name);
+                                    await morphToNavigation(suggestion.name);
+                                }, 150);
+                            } else {
+                                hideAutocomplete();
+                                (async () => {
+                                    addRecent(suggestion.name);
+                                    await morphToNavigation(suggestion.name);
+                                })();
+                            }
+                            
+                            // Focus the input briefly to show selection
+                            activeInput.focus();
+                            activeInput.blur();
+                        }
+                    }
+                }
+                
+                function navigateAutocomplete(direction) {
+                    const items = document.querySelectorAll('.autocomplete-item');
+                    if (items.length === 0) return;
+                    
+                    // Remove previous selection
+                    items.forEach(item => item.classList.remove('selected'));
+                    
+                    if (direction === 'down') {
+                        selectedIndex = selectedIndex < items.length - 1 ? selectedIndex + 1 : 0;
+                    } else if (direction === 'up') {
+                        selectedIndex = selectedIndex > 0 ? selectedIndex - 1 : items.length - 1;
+                    }
+                    
+                    // Add selection to current item
+                    if (selectedIndex >= 0 && selectedIndex < items.length) {
+                        items[selectedIndex].classList.add('selected');
+                        items[selectedIndex].scrollIntoView({ block: 'nearest' });
+                    }
+                }
+                
+                function setupAutocomplete(inputElement = null) {
+                    // Use provided input element or find the search input
+                    const searchInput = inputElement || document.getElementById('searchInput');
+                    if (!searchInput) {
+                        console.error('Search input not found!');
+                        return;
+                    }
+                    
+                    console.log('Autocomplete setup initialized for input:', searchInput);
+                    
+                    // Remove existing listeners to avoid duplicates
+                    if (searchInput.autocompleteSetup) {
+                        console.log('Autocomplete already setup for this input');
+                        return;
+                    }
+                    searchInput.autocompleteSetup = true;
+                    
+                    // Input event for typing
+                    searchInput.addEventListener('input', (e) => {
+                        const query = e.target.value.trim();
+                        console.log('Input event fired, query:', query);
+                        
+                        if (autocompleteTimeout) {
+                            clearTimeout(autocompleteTimeout);
+                        }
+                        
+                        autocompleteTimeout = setTimeout(() => {
+                            fetchAddressSuggestions(query);
+                        }, 300); // Debounce for 300ms
+                    });
+                    
+                    // Keyboard navigation
+                    searchInput.addEventListener('keydown', (e) => {
+                        const dropdown = document.getElementById('autocompleteDropdown');
+                        const isDropdownVisible = dropdown && dropdown.classList.contains('show');
+                        
+                        console.log('Keydown event:', e.key, 'Dropdown visible:', isDropdownVisible);
+                        
+                        switch (e.key) {
+                            case 'ArrowDown':
+                                if (isDropdownVisible) {
+                                    e.preventDefault();
+                                    navigateAutocomplete('down');
+                                }
+                                break;
+                                
+                            case 'ArrowUp':
+                                if (isDropdownVisible) {
+                                    e.preventDefault();
+                                    navigateAutocomplete('up');
+                                }
+                                break;
+                                
+                            case 'Enter':
+                                if (isDropdownVisible && selectedIndex >= 0) {
+                                    e.preventDefault();
+                                    selectSuggestion(selectedIndex);
+                                } else if (searchInput.value.trim() !== '') {
+                                    // User pressed Enter with a destination - trigger route search
+                                    e.preventDefault();
+                                    hideAutocomplete();
+                                    const destinationAddress = searchInput.value.trim();
+                                    console.log('Enter pressed with destination:', destinationAddress);
+                                    
+                                    // Trigger the transition to navigation view
+                                    addRecent(destinationAddress);
+                                    transitionToSearchState(destinationAddress);
+                                }
+                                break;
+                                
+                            case 'Escape':
+                                if (isDropdownVisible) {
+                                    e.preventDefault();
+                                    hideAutocomplete();
+                                }
+                                break;
+                        }
+                    });
+                    
+                    // Hide dropdown when clicking outside
+                    document.addEventListener('click', (e) => {
+                        const searchContainer = document.querySelector('.search-container');
+                        if (searchContainer && !searchContainer.contains(e.target)) {
+                            hideAutocomplete();
+                        }
+                    });
+                    
+                    // Hide dropdown when input loses focus (with delay for clicks)
+                    searchInput.addEventListener('blur', () => {
+                        setTimeout(() => {
+                            hideAutocomplete();
+                        }, 200);
+                    });
+                    
+                    console.log('Autocomplete setup complete for input element');
+                }
+
+                // Function to transition from startup screen to navigation/route selection
+                function transitionToSearchState(destinationAddress) {
+                    console.log('=== TRANSITION TO SEARCH STATE ===');
+                    console.log('Destination address:', destinationAddress);
+                    
+                    try {
+                        if (!window.keyGateUnlocked) {
+                            console.warn('Blocked transitionToSearchState: key gate not unlocked');
+                            return;
+                        }
+                        // If no destination provided, remain on the search screen
+                        if (!destinationAddress || (typeof destinationAddress === 'string' && destinationAddress.trim() === '')) {
+                            console.warn('No destination provided; staying on search screen');
+                            document.body.classList.add('show-search');
+                            const searchScreen = document.getElementById('searchScreen');
+                            const navLayout = document.getElementById('navLayout');
+                            if (navLayout) {
+                                navLayout.classList.remove('active');
+                                navLayout.style.pointerEvents = 'none';
+                                navLayout.style.opacity = navLayout.style.opacity || '0';
+                            }
+                            if (searchScreen) {
+                                searchScreen.classList.add('active');
+                                const searchInput = document.getElementById('searchInput');
+                                if (searchInput) {
+                                    setTimeout(() => searchInput.focus(), 50);
+                                }
+                            }
+                            return;
+                        }
+                        // Add show-search class to body to trigger transition animations
+                        console.log('Adding show-search class to body...');
+                        document.body.classList.add('show-search');
+                        
+                        // Activate the navigation layout 
+                        const navLayout = document.getElementById('navLayout');
+                        if (navLayout) {
+                            console.log('Activating nav layout...');
+                            navLayout.classList.add('active');
+                        } else {
+                            console.error('navLayout element not found!');
+                        }
+                        
+                        // Update destination display
+                        const destinationDisplay = document.getElementById('destinationDisplay');
+                        if (destinationDisplay) {
+                            console.log('Updating destination display...');
+                            destinationDisplay.textContent = destinationAddress;
+                        } else {
+                            console.warn('destinationDisplay element not found');
+                        }
+                        
+                        // Notify Python backend about the search
+                        if (window.pyqtBridge && typeof window.pyqtBridge.searchSubmitted === 'function') {
+                            console.log('Notifying Python backend...');
+                            window.pyqtBridge.searchSubmitted(destinationAddress);
+                        } else {
+                            console.warn('pyqtBridge.searchSubmitted not available');
+                        }
+                        
+                        // Initialize mapping and show routes with a delay to allow transitions
+                        console.log('Setting up map initialization...');
+                        setTimeout(() => {
+                            try {
+                                console.log('Initializing map...');
+                                if (typeof initializeMap === 'function') {
+                                    initializeMap();
+                                } else {
+                                    console.error('initializeMap function not found');
+                                }
+                                
+                                console.log('Showing routes to destination...');
+                                if (typeof showRoutesToDestination === 'function') {
+                                    showRoutesToDestination(destinationAddress);
+                                } else {
+                                    console.error('showRoutesToDestination function not found');
+                                }
+                            } catch (error) {
+                                console.error('Error in delayed map initialization:', error);
+                            }
+                        }, 500);
+                        
+                        console.log('Transition setup complete');
+                        
+                    } catch (error) {
+                        console.error('Error in transitionToSearchState:', error);
+                    }
+                }
+
+                document.addEventListener('DOMContentLoaded', function() {
+                    console.log('DOM loaded, setting up autocomplete...');
+                    // Listen for destination reached messages from 3D sim iframe
+                    window.addEventListener('message', function(event) {
+                        try {
+                            const data = event.data || {};
+                            if (data && data.type === 'destinationReached') {
+                                handleDestinationReached();
+                            }
+                        } catch (e) {
+                            console.warn('Message handler error:', e);
+                        }
+                    });
+                    
+                    // Initialize autocomplete - try multiple times to catch when search input becomes available
+                    const trySetupAutocomplete = () => {
+                        setupAutocomplete();
+                        
+                        // Also watch for when the search screen becomes active
+                        const searchScreen = document.getElementById('searchScreen');
+                        if (searchScreen) {
+                            const observer = new MutationObserver((mutations) => {
+                                mutations.forEach((mutation) => {
+                                    if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                                        if (searchScreen.classList.contains('active')) {
+                                            console.log('Search screen became active, setting up autocomplete...');
+                                            setTimeout(() => setupAutocomplete(), 100);
+                                        }
+                                    }
+                                });
+                            });
+                            
+                            observer.observe(searchScreen, {
+                                attributes: true,
+                                attributeFilter: ['class']
+                            });
+                        }
+                    };
+                    
+                    trySetupAutocomplete();
+                    
+                    // Try again after a short delay
+                    setTimeout(trySetupAutocomplete, 500);
+                    setTimeout(trySetupAutocomplete, 1000);
+                    
+                    // Show recent addresses (if any) when the search screen first becomes active
+                    const recents = loadRecents();
+                    if (Array.isArray(recents) && recents.length > 0) {
+                        const recentItems = recents.map(r => ({ name: r, address: r, type: 'recent', _recent: true }));
+                        currentSuggestions = recentItems;
+                        setTimeout(() => {
+                            showAutocompleteSuggestions(recentItems, { header: 'Recent' });
+                        }, 200);
+                    }
+                    
+                    // Initialize PIN state
+                    checkPinStateAndSetup();
+                });
+
+                function showToast(message, type = 'success', timeout = 3000) {
+                    try {
+                        const container = document.getElementById('toastContainer');
+                        if (!container) return;
+                        const el = document.createElement('div');
+                        el.className = `toast ${type}`;
+                        el.textContent = message;
+                        container.appendChild(el);
+                        // Force reflow then show
+                        void el.offsetWidth;
+                        el.classList.add('show');
+                        setTimeout(() => {
+                            el.classList.remove('show');
+                            setTimeout(() => el.remove(), 250);
+                        }, Math.max(1500, timeout));
+                    } catch (e) {
+                        console.warn('Toast error:', e);
+                    }
+                }
+
+                // Central helper to return to search screen
+                function returnToSearch(options = {}) {
+                    const { clearMap = false, focus = true } = options;
+
+                    try {
+                        if (clearMap) {
+                            if (Array.isArray(routeLayers) && routeLayers.length) {
+                                routeLayers.forEach(layer => {
+                                    try { if (map && map.hasLayer(layer)) map.removeLayer(layer); } catch (_) {}
+                                });
+                                routeLayers = [];
+                            }
+                            if (map) {
+                                try { if (currentLocationMarker) map.removeLayer(currentLocationMarker); } catch (_) {}
+                                try { if (destinationMarker) map.removeLayer(destinationMarker); } catch (_) {}
+                            }
+                        }
+
+                        const navLayout = document.getElementById('navLayout');
+                        const searchScreen = document.getElementById('searchScreen');
+                        if (navLayout) {
+                            navLayout.classList.remove('active');
+                            navLayout.style.opacity = '0';
+                            navLayout.style.pointerEvents = 'none';
+                        }
+                        if (searchScreen) {
+                            searchScreen.classList.add('active');
+                            document.body.classList.add('show-search');
+                            if (focus) {
+                                const si = document.getElementById('searchInput');
+                                if (si) setTimeout(() => si.focus(), 50);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('returnToSearch error:', e);
+                    }
+                }
+
+                // Handle arrival: return to search and inform user
+                function handleDestinationReached() {
+                    try {
+                        // Show toast first, then navigate back
+                        showToast('The car has reached the destination. Enjoy!', 'success');
+                        setTimeout(() => returnToSearch({ clearMap: true, focus: true }), 50);
+                    } catch (e) {
+                        console.error('Error handling destination arrival:', e);
+                    }
+                }
+
+                // Modified navigation morph to work with the morphed search proxy and initialize mapping
+                function morphToNavigation(address, sourceProxy = null) {
+                    const searchScreen = document.getElementById('searchScreen');
+                    const navLayout = document.getElementById('navLayout');
+                    const searchBar = document.getElementById('searchBar');
+                    const destinationDisplay = document.getElementById('destinationDisplay');
+
+                    // Gate: must be unlocked and have a non-empty address
+                    if (!window.keyGateUnlocked) {
+                        console.warn('Blocked morphToNavigation: key gate not unlocked');
+                        return;
+                    }
+                    if (!address || (typeof address === 'string' && address.trim() === '')) {
+                        console.warn('Blocked morphToNavigation: empty address; showing search screen');
+                        document.body.classList.add('show-search');
+                        if (navLayout) navLayout.classList.remove('active');
+                        if (searchScreen) searchScreen.classList.add('active');
+                        const si = document.getElementById('searchInput');
+                        if (si) setTimeout(() => si.focus(), 50);
+                        return;
+                    }
+
+                    if (!navLayout) {
+                        console.error("Navigation layout not found");
+                        return;
+                    }
+
+                    // Store address for display in the sidebar
+                    if (searchBar) {
+                        searchBar.textContent = address;
+                    }
+
+                    // Update the destination display
+                    if (destinationDisplay) {
+                        destinationDisplay.textContent = address;
+                    }
+
+                    console.log("Morphing to navigation with address:", address);
+
+                    // Use the source proxy (morphed search input) if available
+                    const sourceElement = sourceProxy || document.querySelector('.search-container');
+                    if (!sourceElement) {
+                        console.error("No source element for morphing");
+                        return;
+                    }
+
+                    try {
+                        // Notify Python backend
+                        if (window.pyqtBridge && typeof window.pyqtBridge.searchSubmitted === 'function') {
+                            window.pyqtBridge.searchSubmitted(address);
+                        }
+                        
+                        // Initialize mapping and show routes
+                        setTimeout(() => {
+                            initializeMap();
+                            // Give map time to initialize then show routes
+                            setTimeout(() => {
+                                showRoutesToDestination(address);
+                            }, 1000);
+                        }, 100);
+                        
+                    } catch (err) {
+                        console.error("Error in morphToNavigation:", err);
+                    }
+
+                    // Get source position from the morphed element
+                    const sourceRect = sourceElement.getBoundingClientRect();
+                    
+                    // Calculate layout proportions
+                    const windowWidth = window.innerWidth;
+                    const windowHeight = window.innerHeight;
+                    const sidebarWidth = Math.min(420, windowWidth * 0.35);
+                    const padding = 24;
+                    const gap = 16;
+                    
+                    // Pre-setup navigation layout (hidden with blur)
+                    navLayout.style.display = 'flex';
+                    navLayout.style.opacity = '0';
+                    navLayout.style.filter = 'blur(20px)';
+                    navLayout.style.pointerEvents = 'none';
+                    
+                    // Get sidebar and map elements
+                    const sidebar = navLayout.querySelector('.navigation-sidebar');
+                    const mapContainer = navLayout.querySelector('.map-container');
+                    
+                    if (sidebar) {
+                        sidebar.style.opacity = '0';
+                        sidebar.style.filter = 'blur(15px)';
+                        sidebar.style.transform = 'translateY(30px)';
+                    }
+                    
+                    if (mapContainer) {
+                        mapContainer.style.opacity = '0';
+                        mapContainer.style.filter = 'blur(20px)';
+                        mapContainer.style.transform = 'scale(0.95)';
+                    }
+
+                    // Create morphing proxy that will become the sidebar
+                    const sidebarProxy = document.createElement('div');
+                    sidebarProxy.className = 'morph-proxy sidebar-proxy';
+                    sidebarProxy.style.position = 'fixed';
+                    sidebarProxy.style.left = sourceRect.left + 'px';
+                    sidebarProxy.style.top = sourceRect.top + 'px';
+                    sidebarProxy.style.width = sourceRect.width + 'px';
+                    sidebarProxy.style.height = sourceRect.height + 'px';
+                    sidebarProxy.style.borderRadius = '28px';
+                    sidebarProxy.style.background = 'linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%)';
+                    sidebarProxy.style.backdropFilter = 'blur(20px) saturate(150%)';
+                    sidebarProxy.style.webkitBackdropFilter = 'blur(20px) saturate(150%)';
+                    sidebarProxy.style.border = '1px solid rgba(255, 255, 255, 0.12)';
+                    sidebarProxy.style.zIndex = '10000';
+                    sidebarProxy.style.transform = 'scale(1)';
+                    sidebarProxy.style.filter = 'blur(0px)';
+                    sidebarProxy.style.opacity = '1';
+                    document.body.appendChild(sidebarProxy);
+
+                    // Hide the source elements smoothly
+                    if (sourceProxy) {
+                        sourceProxy.animate([
+                            { opacity: 1, transform: 'scale(1)', filter: 'blur(0px)' },
+                            { opacity: 0, transform: 'scale(0.95)', filter: 'blur(3px)' }
+                        ], { 
+                            duration: 400, 
+                            easing: 'cubic-bezier(0.4, 0, 0.6, 1)', 
+                            fill: 'forwards' 
+                        });
+                    }
+                    if (searchScreen) {
+                        searchScreen.classList.remove('active');
+                    }
+
+                    // Stage 1: Morph search bar directly into sidebar panel
+                    const morphDuration = 800;
+                    const morphEasing = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+                    
+                    const sidebarMorphAnim = sidebarProxy.animate([
+                        {
+                            left: sourceRect.left + 'px',
+                            top: sourceRect.top + 'px',
+                            width: sourceRect.width + 'px',
+                            height: sourceRect.height + 'px',
+                            borderRadius: '28px',
+                            transform: 'scale(1)',
+                            filter: 'blur(0px)',
+                            opacity: 1
+                        },
+                        {
+                            left: padding + 'px',
+                            top: padding + 'px',
+                            width: sidebarWidth + 'px',
+                            height: (windowHeight - padding * 2) + 'px',
+                            borderRadius: '24px',
+                            transform: 'scale(1)',
+                            filter: 'blur(0px)',
+                            opacity: 1
+                        }
+                    ], { duration: morphDuration, easing: morphEasing, fill: 'forwards' });
+
+                    // Stage 2: Blur fade-in sidebar content during the morph
+                    setTimeout(() => {
+                        const contentFadeDuration = 600;
+                        const contentEasing = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+                        
+                        if (sidebar) {
+                            sidebar.animate([
+                                { 
+                                    opacity: 0, 
+                                    filter: 'blur(15px)', 
+                                    transform: 'translateY(30px)' 
+                                },
+                                { 
+                                    opacity: 1, 
+                                    filter: 'blur(0px)', 
+                                    transform: 'translateY(0)' 
+                                }
+                            ], { 
+                                duration: contentFadeDuration, 
+                                easing: contentEasing, 
+                                fill: 'forwards' 
+                            });
+                        }
+                        
+                        // Stage 3: Map window blur fade-in with slight delay
+                        setTimeout(() => {
+                            const mapFadeDuration = 700;
+                            const mapEasing = 'cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+                            
+                            if (mapContainer) {
+                                mapContainer.animate([
+                                    { 
+                                        opacity: 0, 
+                                        filter: 'blur(20px)', 
+                                        transform: 'scale(0.95)' 
+                                    },
+                                    { 
+                                        opacity: 1, 
+                                        filter: 'blur(0px)', 
+                                        transform: 'scale(1)' 
+                                    }
+                                ], { 
+                                    duration: mapFadeDuration, 
+                                    easing: mapEasing, 
+                                    fill: 'forwards' 
+                                });
+                            }
+                            
+                            // Final reveal of the full navigation layout
+                            navLayout.animate([
+                                { 
+                                    opacity: 0, 
+                                    filter: 'blur(20px)' 
+                                },
+                                { 
+                                    opacity: 1, 
+                                    filter: 'blur(0px)' 
+                                }
+                            ], { 
+                                duration: 500, 
+                                easing: 'ease-out', 
+                                fill: 'forwards' 
+                            }).onfinish = () => {
+                                navLayout.style.pointerEvents = 'auto';
+                                navLayout.classList.add('active');
+                                
+                                // Setup map interactions
+                                setupMapInteractions();
+                                
+                                // Animate in route options with staggered blur reveal
+                                const routeOptions = document.querySelectorAll('.route-option');
+                                routeOptions.forEach((option, index) => {
+                                    option.style.opacity = '0';
+                                    option.style.filter = 'blur(10px)';
+                                    option.style.transform = 'translateY(20px)';
+                                    
+                                    setTimeout(() => {
+                                        option.animate([
+                                            { 
+                                                opacity: 0, 
+                                                filter: 'blur(10px)', 
+                                                transform: 'translateY(20px)' 
+                                            },
+                                            { 
+                                                opacity: 1, 
+                                                filter: 'blur(0px)', 
+                                                transform: 'translateY(0)' 
+                                            }
+                                        ], { 
+                                            duration: 400, 
+                                            easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)', 
+                                            fill: 'forwards' 
+                                        });
+                                    }, index * 100 + 200); // Staggered timing
+                                });
+                                
+                                // Clean up proxy after everything is done
+                                setTimeout(() => {
+                                    if (sidebarProxy && sidebarProxy.parentNode) {
+                                        sidebarProxy.animate([
+                                            { opacity: 1 },
+                                            { opacity: 0 }
+                                        ], {
+                                            duration: 300,
+                                            easing: 'ease-out',
+                                            fill: 'forwards'
+                                        }).onfinish = () => sidebarProxy.remove();
+                                    }
+                                    
+                                    if (sourceProxy && sourceProxy.parentNode) {
+                                        sourceProxy.remove();
+                                    }
+                                }, 600);
+                            };
+                        }, 200); // Delay map fade-in
+                    }, 400); // Start content fade-in during sidebar morph
+                }
+
+                function forwardMouseEvent(event) {
+                    // Don't forward events if they're on the slider
+                    const sliderContainer = document.getElementById('sliderContainer');
+                    if (sliderContainer && sliderContainer.contains(event.target)) {
+                        return;
+                    }
+
+                    // Forward mouse events to the canvas
+                    const canvas = document.querySelector('canvas');
+                    if (canvas) {
+                        const rect = canvas.getBoundingClientRect();
+                        const newEvent = new MouseEvent(event.type, {
+                            clientX: event.clientX,
+                            clientY: event.clientY,
+                            offsetX: event.clientX - rect.left,
+                            offsetY: event.clientY - rect.top,
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        canvas.dispatchEvent(newEvent);
+                    }
+                }
+                
+                // Set up map interactions
+                // Global variables for routes and map
+                let currentRoutes = [];
+                let activeRouteIndex = 0;
+                let mapZoom = 1;
+                let mapOffset = { x: 0, y: 0 };
+                
+                // Function to fetch routes - now integrates with mapping system
+                function fetchRoutes(startLocation, endLocation) {
+                    console.log(`fetchRoutes called: ${startLocation} to ${endLocation}`);
+                    
+                    // Use the new mapping system instead of Python backend
+                    if (endLocation && endLocation !== startLocation) {
+                        showRoutesToDestination(endLocation);
+                    }
+                    
+                    // Still try Python backend for compatibility
+                    if (!window.pyqtBridge) {
+                        console.warn("Python bridge not available, using map-based routing");
+                        return;
+                    }
+                    
+                    try {
+                        if (typeof window.pyqtBridge.getRoutes === 'function') {
+                            const routes = window.pyqtBridge.getRoutes(startLocation, endLocation);
+                            if (routes && Array.isArray(routes) && routes.length > 0) {
+                                console.log("Got routes from Python backend:", routes);
+                                currentRoutes = routes;
+                                // Could also display these if needed
+                            }
+                        } else {
+                            console.warn("getRoutes function not available on Python bridge");
+                        }
+                    } catch (error) {
+                        console.warn("Python backend route fetch failed:", error);
+                    }
+                }
+                
+                // Initialize everything when DOM is ready
+                document.addEventListener('DOMContentLoaded', function() {
+                    console.log('DOM loaded, setting up application...');
+                    
+                    // Set up navigation button handlers
+                    const startNavButton = document.getElementById('startNavigation');
+                    if (startNavButton) {
+                        startNavButton.addEventListener('click', function() {
+                            console.log('Start pressed: collapsing sidebar and fading map');
+                            document.body.classList.add('driving');
+                            // Small delay to let CSS start animating before notifying backend
+                            setTimeout(() => {
+                                if (window.pyqtBridge && typeof window.pyqtBridge.navigationStarted === 'function') {
+                                    window.pyqtBridge.navigationStarted();
+                                }
+                            }, 350);
+                        });
+                    }
+
+                    // Set up back button
+                    const backButton = document.getElementById('backButton');
+                    if (backButton) {
+                        backButton.addEventListener('click', function() {
+                            const navLayout = document.getElementById('navLayout');
+                            const searchScreen = document.getElementById('searchScreen');
+                            
+                            if (navLayout) navLayout.classList.remove('active');
+                            if (searchScreen) {
+                                searchScreen.classList.add('active');
+                                const searchInput = document.getElementById('searchInput');
+                                if (searchInput) {
+                                    searchInput.focus();
+                                    searchInput.select();
+                                }
+                            }
+                        });
+                    }
+
+                    // Initialize autocomplete after DOM is ready
+                    setTimeout(() => {
+                        setupAutocomplete();
+                    }, 100);
+                });
+
+                // Handle navigation layout activation
+                function activateNavigation() {
+                    if (!window.keyGateUnlocked) {
+                        console.warn('Blocked activateNavigation: key gate not unlocked');
+                        return;
+                    }
+                    const navLayout = document.getElementById('navLayout');
+                    const searchScreen = document.getElementById('searchScreen');
+                    
+                    if (searchScreen) {
+                        searchScreen.classList.remove('active');
+                    }
+                    
+                    if (navLayout) {
+                        navLayout.classList.add('active');
+                        // Initialize map when navigation becomes active
+                        setTimeout(() => {
+                            if (!map) {
+                                initializeMap();
+                            }
+                        }, 300);
+                    }
+                }
+                // Removed createFallbackRoutes: must not fabricate routes
+                
+                // Variables for point selection
+                let pointSelectionMode = false;
+                let selectedPoints = [];
+                
+                // Function to toggle point selection mode
+                function togglePointSelectionMode() {
+                    pointSelectionMode = !pointSelectionMode;
+                    const tooltip = document.querySelector('.point-selection-tooltip');
+                    
+                    if (pointSelectionMode) {
+                        tooltip.textContent = selectedPoints.length === 0 ? 
+                            "Click to select start point" : "Click to select end point";
+                        tooltip.classList.add('active');
+                        
+                        // Change cursor for the map
+                        const mapContainer = document.querySelector('.map-container');
+                        if (mapContainer) mapContainer.style.cursor = 'crosshair';
+                    } else {
+                        tooltip.classList.remove('active');
+                        
+                        // Reset cursor
+                        const mapContainer = document.querySelector('.map-container');
+                        if (mapContainer) mapContainer.style.cursor = '';
+                        
+                        // If we have 2 points, find routes between them
+                        if (selectedPoints.length === 2) {
+                            findRoutesBetweenPoints(selectedPoints[0], selectedPoints[1]);
+                        }
+                    }
+                }
+                
+                // Function to handle map clicks for point selection
+                function handleMapClick(e) {
+                    if (!pointSelectionMode) return;
+                    
+                    // Get click coordinates relative to the map
+                    const mapContainer = document.querySelector('.map-container');
+                    const rect = mapContainer.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    
+                    // Add point to selected points
+                    if (selectedPoints.length < 2) {
+                        selectedPoints.push({x, y});
+                        
+                        // Create marker at the clicked position
+                        const marker = document.createElement('div');
+                        marker.className = `map-marker ${selectedPoints.length === 1 ? 'start' : 'end'}`;
+                        marker.style.left = `${x}px`;
+                        marker.style.top = `${y}px`;
+                        mapContainer.appendChild(marker);
+                        
+                        // Update tooltip or end selection mode
+                        const tooltip = document.querySelector('.point-selection-tooltip');
+                        if (selectedPoints.length === 1) {
+                            tooltip.textContent = "Click to select end point";
+                        } else {
+                            // We have both points, end selection mode and find route
+                            togglePointSelectionMode();
+                        }
+                    }
+                }
+                
+                // Function to find routes between selected points
+                function findRoutesBetweenPoints(startPoint, endPoint) {
+                    console.log("Finding routes between", startPoint, "and", endPoint);
+                    
+                    try {
+                        if (window.pyqtBridge && typeof window.pyqtBridge.findPointsRoute === 'function') {
+                            // Call Python backend to find routes between points
+                            const routes = window.pyqtBridge.findPointsRoute(startPoint.x, startPoint.y, endPoint.x, endPoint.y);
+                            if (routes && Array.isArray(routes)) {
+                                currentRoutes = routes;
+                                // Rendering is handled by Leaflet elsewhere
+                            } else {
+                                console.error("Invalid routes returned from findPointsRoute");
+                            }
+                        } else if (window.backend && typeof window.backend.find_points_route === 'function') {
+                            // Alternative direct call to backend
+                            const routes = window.backend.find_points_route(startPoint.x, startPoint.y, endPoint.x, endPoint.y);
+                            if (routes && Array.isArray(routes)) {
+                                currentRoutes = routes;
+                                // Rendering is handled by Leaflet elsewhere
+                            } else {
+                                console.error("Invalid routes returned from find_points_route");
+                            }
+                        } else {
+                            console.error("findPointsRoute/find_points_route method not available");
+                            // Try fallback to normal route finding
+                            fetchRoutes("Selected Start", "Selected End");
+                        }
+                    } catch (err) {
+                        console.error("Error finding routes between points:", err);
+                        fetchRoutes("Selected Start", "Selected End");
+                    }
+                }
+                
+                // Function to reset point selection
+                function resetPointSelection() {
+                    selectedPoints = [];
+                    document.querySelectorAll('.map-marker').forEach(marker => {
+                        marker.remove();
+                    });
+                }
+                
+                // Removed legacy SVG-based route rendering functions: displayRoutes, drawRouteOnMap, addMapMarkers
+                
+                function setupMapInteractions() {
+                    // Map controls interaction
+                    const zoomIn = document.querySelector('.zoom-in');
+                    const zoomOut = document.querySelector('.zoom-out');
+                    const layers = document.querySelector('.layers');
+                    const myLocation = document.querySelector('.my-location');
+                    const compass = document.querySelector('.compass-control');
+                    const mapView = document.getElementById('mapView');
+                    const routeOptions = document.querySelectorAll('.route-option');
+                    const startButton = document.getElementById('startNavigation');
+                    const backButton = document.getElementById('backButton');
+                    const editButton = document.getElementById('editDestination');
+                    const mapContainer = document.querySelector('.map-container');
+                    
+                    // Create point selection button
+                    const selectionButton = document.createElement('button');
+                    selectionButton.className = 'point-selection-button';
+                    selectionButton.innerHTML = '<i class="fas fa-map-marker-alt"></i>';
+                    selectionButton.title = 'Select two points on the map';
+                    if (mapContainer) mapContainer.appendChild(selectionButton);
+                    
+                    // Create tooltip for point selection
+                    const tooltip = document.createElement('div');
+                    tooltip.className = 'point-selection-tooltip';
+                    tooltip.textContent = 'Click to select start point';
+                    if (mapContainer) mapContainer.appendChild(tooltip);
+                    
+                    // Map zoom level tracking
+                    let zoomLevel = 15; // Default zoom level
+                    let isDragging = false;
+                    let lastX, lastY;
+                    
+                    // Zoom in functionality
+                    if (zoomIn) {
+                        zoomIn.addEventListener('click', () => {
+                            if (zoomLevel < 20) {
+                                zoomLevel++;
+                                updateMapView();
+                                
+                                // Visual feedback
+                                zoomIn.style.transform = 'scale(0.95)';
+                                setTimeout(() => {
+                                    zoomIn.style.transform = '';
+                                }, 150);
+                            }
+                        });
+                    }
+                    
+                    // Zoom out functionality
+                    if (zoomOut) {
+                        zoomOut.addEventListener('click', () => {
+                            if (zoomLevel > 10) {
+                                zoomLevel--;
+                                updateMapView();
+                                
+                                // Visual feedback
+                                zoomOut.style.transform = 'scale(0.95)';
+                                setTimeout(() => {
+                                    zoomOut.style.transform = '';
+                                }, 150);
+                            }
+                        });
+                    }
+                    
+                    // Add click handler for selection button
+                    if (selectionButton) {
+                        selectionButton.addEventListener('click', () => {
+                            // If we're turning off selection mode, reset points
+                            if (pointSelectionMode) {
+                                resetPointSelection();
+                            }
+                            togglePointSelectionMode();
+                        });
+                    }
+                    
+                    // Add click handler for the map
+                    if (mapContainer) {
+                        mapContainer.addEventListener('click', (e) => {
+                            // Only handle clicks for point selection mode
+                            if (pointSelectionMode) {
+                                handleMapClick(e);
+                            }
+                        });
+                    }
+                    
+                    // My location button
+                    if (myLocation) {
+                        myLocation.addEventListener('click', () => {
+                            // Animate the pulse effect on the current location marker
+                            const mapPlaceholder = document.querySelector('.map-placeholder');
+                            if (mapPlaceholder) {
+                                mapPlaceholder.classList.add('pulse-location');
+                                setTimeout(() => {
+                                    mapPlaceholder.classList.remove('pulse-location');
+                                }, 1000);
+                            }
+                            
+                            // Visual feedback
+                            myLocation.style.transform = 'scale(0.95)';
+                            setTimeout(() => {
+                                myLocation.style.transform = '';
+                            }, 150);
+                        });
+                    }
+                    
+                    // Compass button
+                    if (compass) {
+                        let rotation = 0;
+                        
+                        compass.addEventListener('click', () => {
+                            // Reset rotation
+                            rotation = 0;
+                            mapView.style.transition = 'transform 0.5s ease';
+                            mapView.style.transform = `rotate(${rotation}deg)`;
+                            
+                            // Visual feedback
+                            compass.style.transform = 'scale(0.95)';
+                            setTimeout(() => {
+                                compass.style.transform = '';
+                                mapView.style.transition = '';
+                            }, 150);
+                        });
+                    }
+                    
+                    // Route selection
+                    if (routeOptions) {
+                        routeOptions.forEach(route => {
+                            route.addEventListener('click', () => {
+                                // Remove active class from all routes
+                                routeOptions.forEach(r => r.classList.remove('active'));
+                                
+                                // Add active class to clicked route
+                                route.classList.add('active');
+                                
+                                // Get route index
+                                const routeIndex = parseInt(route.getAttribute('data-route-index') || '0');
+                                activeRouteIndex = routeIndex;
+                                
+                                // Notify Python of selection
+                                if (window.pyqtBridge) {
+                                    window.pyqtBridge.routeSelected(routeIndex);
+                                }
+                                
+                                // Update map to show selected route
+                                // Leaflet routes are already displayed; optionally adjust styles here if needed
+                            });
+                        });
+                    }
+                    
+                    // Start navigation button
+                    if (startButton) {
+                        startButton.addEventListener('click', () => {
+                            // Add "starting" class to button for visual feedback
+                            startButton.classList.add('starting');
+                            startButton.textContent = 'Starting...';
+                            
+                            // Notify Python of navigation start
+                            if (window.pyqtBridge) {
+                                window.pyqtBridge.navigationStarted();
+                            }
+                            
+                            // Simulate transition to the actual navigation interface
+                            setTimeout(() => {
+                                startButton.textContent = 'Navigate';
+                                startButton.classList.remove('starting');
+                                
+                                // Show a success message (non-blocking)
+                                showToast('Navigation started with the selected route!', 'success');
+                            }, 1500);
+                        });
+                    }
+                    
+                    // Back button
+                    if (backButton) {
+                        backButton.addEventListener('click', () => {
+                            // Return to search
+                            const searchScreen = document.getElementById('searchScreen');
+                            const navLayout = document.getElementById('navLayout');
+                            
+                            if (searchScreen && navLayout) {
+                                // Hide nav layout
+                                navLayout.classList.remove('active');
+                                navLayout.style.opacity = '0';
+                                navLayout.style.pointerEvents = 'none';
+                                
+                                // Show search screen
+                                searchScreen.classList.add('active');
+                                
+                                // Focus search input
+                                const input = document.getElementById('searchInput');
+                                input && input.focus();
+                            }
+                        });
+                    }
+                    
+                    // Edit button
+                    if (editButton) {
+                        editButton.addEventListener('click', () => {
+                            // Similar to back button but should keep the address
+                            const searchScreen = document.getElementById('searchScreen');
+                            const navLayout = document.getElementById('navLayout');
+                            const searchBar = document.getElementById('searchBar');
+                            const searchInput = document.getElementById('searchInput');
+                            
+                            if (searchScreen && navLayout && searchBar && searchInput) {
+                                // Get current address
+                                const currentAddress = searchBar.textContent;
+                                
+                                // Hide nav layout
+                                navLayout.classList.remove('active');
+                                navLayout.style.opacity = '0';
+                                navLayout.style.pointerEvents = 'none';
+                                
+                                // Show search screen and set input value
+                                searchScreen.classList.add('active');
+                                searchInput.value = currentAddress;
+                                searchInput.select();
+                            }
+                        });
+                    }
+                    
+                    // Map dragging functionality
+                    if (mapView) {
+                        mapView.addEventListener('mousedown', (e) => {
+                            isDragging = true;
+                            lastX = e.clientX;
+                            lastY = e.clientY;
+                            mapView.style.cursor = 'grabbing';
+                        });
+                        
+                        document.addEventListener('mousemove', (e) => {
+                            if (isDragging) {
+                                const deltaX = e.clientX - lastX;
+                                const deltaY = e.clientY - lastY;
+                                
+                                // Pan the map by updating background position
+                                const style = window.getComputedStyle(mapView);
+                                const bgPosX = parseInt(style.backgroundPositionX || '0') + deltaX;
+                                const bgPosY = parseInt(style.backgroundPositionY || '0') + deltaY;
+                                
+                                mapView.style.backgroundPosition = `${bgPosX}px ${bgPosY}px`;
+                                
+                                lastX = e.clientX;
+                                lastY = e.clientY;
+                            }
+                        });
+                        
+                        document.addEventListener('mouseup', () => {
+                            if (isDragging) {
+                                isDragging = false;
+                                mapView.style.cursor = '';
+                            }
+                        });
+                    }
+                    
+                    function updateMapView() {
+                        // Update map view based on zoom level
+                        if (mapView) {
+                            // Scale the map elements based on zoom level
+                            const scale = 1 + (zoomLevel - 15) * 0.1; // 10% change per zoom level
+                            
+                            // Update the background size to simulate zoom
+                            const currentBackgroundSize = window.getComputedStyle(mapView).backgroundSize;
+                            const sizes = currentBackgroundSize.split(',');
+                            
+                            // Update all background sizes
+                            mapView.style.backgroundSize = sizes.map(() => `${100 * scale}px ${100 * scale}px`).join(', ');
+                        }
+                    }
+                }
+
+                // Handle window resize
+                window.addEventListener('resize', function() {
+                    if (typeof resizeCanvas === 'function') {
+                        resizeCanvas();
+                    }
+                });
+
+                // Input pulse on keystroke and navigation morphing on enter
+                document.addEventListener('DOMContentLoaded', function() {
+                    const sc = document.querySelector('.search-container');
+                    const si = document.getElementById('searchInput');
+                    const searchScreen = document.getElementById('searchScreen');
+                    const navLayout = document.getElementById('navLayout');
+                    const searchBar = document.getElementById('searchBar');
+                    
+                    if (sc && si) {
+                        let t;
+                        si.addEventListener('input', () => {
+                            sc.classList.remove('pulse');
+                            void sc.offsetWidth; // reflow to restart animation
+                            sc.classList.add('pulse');
+                            clearTimeout(t);
+                            t = setTimeout(() => sc.classList.remove('pulse'), 160);
+                        });
+                        
+                        // Handle Enter key to morph to navigation layout
+                        si.addEventListener('keydown', (e) => {
+                            if (e.key === 'Enter' && si.value.trim() !== '') {
+                                e.preventDefault();
+                                // This should never be called now since si is hidden
+                                // The morphed input handles enter key events
+                            }
+                        });
+                    }
+                });
+            </script>
+        </body>
+    </html>

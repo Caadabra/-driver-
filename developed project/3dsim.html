@@ -1,0 +1,1135 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Car AI Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+        }
+        
+        #sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 400px;
+            height: 100vh;
+            background: #1a1a1a;
+            color: #ffffff;
+            padding: 20px;
+            box-sizing: border-box;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            border-right: 2px solid #666666;
+        }
+        
+        #threejs-canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            margin-left: 0;
+        }
+        
+        #status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 1000;
+        }
+        
+        .nav-section {
+            margin-bottom: 20px;
+        }
+        
+        .nav-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #ffffff;
+            border-bottom: 1px solid #666666;
+            padding-bottom: 5px;
+        }
+        
+        #directions {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 200px;
+        }
+        
+        .direction-item {
+            padding: 8px 12px;
+            margin: 5px 0;
+            border-radius: 5px;
+            border-left: 3px solid #666666;
+            background: #2a2a2a;
+        }
+        
+        .direction-item.current {
+            background: #333333;
+            border-left-color: #ffffff;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+        }
+        
+        .direction-distance {
+            font-size: 12px;
+            color: #aaaaaa;
+            margin-top: 3px;
+        }
+        
+        #minimap {
+            width: 360px;
+            height: 300px;
+            border: 2px solid #666666;
+            border-radius: 5px;
+            background: #000000;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        #minimap-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        .control-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-top: 10px;
+        }
+        
+        .control-btn {
+            padding: 15px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+        }
+        
+        .stop-btn {
+            background: #dc3545;
+            color: white;
+            box-shadow: 0 4px 8px rgba(220, 53, 69, 0.3);
+        }
+        
+        .stop-btn:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(220, 53, 69, 0.4);
+        }
+        
+        .start-btn {
+            background: #28a745;
+            color: white;
+            box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+        }
+        
+        .start-btn:hover {
+            background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(40, 167, 69, 0.4);
+        }
+        
+        .control-btn:active {
+            transform: translateY(0);
+        }
+        
+        .connected {
+            background: #333333;
+            color: white;
+        }
+        
+        .disconnected {
+            background: #666666;
+            color: white;
+        }
+    </style>
+    </style>
+</head>
+<body>
+    <div id="container">
+        <!-- Left Sidebar -->
+        <div id="sidebar">
+            <div class="nav-section">
+                <div class="nav-title">Navigation</div>
+                <div id="directions">
+                    <div class="direction-item current">
+                        <div>Continue straight on Main Street</div>
+                        <div class="direction-distance">in 0.3 miles</div>
+                    </div>
+                    <div class="direction-item">
+                        <div>Turn right onto Oak Avenue</div>
+                        <div class="direction-distance">in 0.8 miles</div>
+                    </div>
+                    <div class="direction-item">
+                        <div>Turn left onto Highway 101</div>
+                        <div class="direction-distance">in 1.2 miles</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="nav-section">
+                <div class="nav-title">Mini Map</div>
+                <div id="minimap">
+                    <canvas id="minimap-canvas" width="500" height="400"></canvas>
+                </div>
+            </div>
+            
+            <div class="nav-section">
+                <div class="nav-title">Controls</div>
+                <div class="control-buttons">
+                    <button id="emergency-stop" class="control-btn stop-btn" onclick="toggleEmergencyStop()">EMERGENCY STOP</button>
+                    <button id="start-btn" class="control-btn start-btn" onclick="startSimulation()" style="display: none;">START</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main 3D View -->
+        <canvas id="threejs-canvas"></canvas>
+        
+        <div id="status" class="disconnected">Connecting...</div>
+        <div id="path-status" style="position: absolute; top: 50px; right: 10px; padding: 8px 16px; border-radius: 4px; font-size: 14px; font-weight: bold; z-index: 1000; background: #666666; color: white;">Validating Paths...</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // Three.js setup
+        let scene, camera, renderer, controls;
+        let cars = new Map();
+        let roads = new Map();
+        let ground;
+        let followMode = true;
+        let bestCar = null;
+        let wireframeMode = false;
+        
+        // Camera smoothing variables (improved for smoothness)
+        let targetCameraPosition = new THREE.Vector3();
+        let targetCameraLookAt = new THREE.Vector3();
+        let cameraLerpFactor = 0.08; // Smoother following (was 0.15)
+        let followDistance = 5; // Closer camera distance
+        
+        // WebSocket connection
+        let ws;
+        let reconnectInterval;
+        
+        // Car interpolation for smooth 60fps movement (improved)
+        let previousCarData = new Map();
+        let interpolationFactor = 0.0;
+        let lastUpdateTime = 0;
+        let smoothingEnabled = true;
+        let interpolationSpeed = 0.12; // Smoother interpolation
+        
+        // Minimap variables (updated for larger size and better zoom)
+        let minimapCanvas, minimapCtx;
+        let minimapScale = 3.0; // Better scale for 500x400 minimap with more detail
+        let minimapCenterX = 250, minimapCenterY = 200; // Center of 500x400 minimap
+        
+        // Emergency stop state
+        let emergencyStopActive = false;
+        let simulationPaused = false;
+        
+        function toggleEmergencyStop() {
+            emergencyStopActive = !emergencyStopActive;
+            simulationPaused = emergencyStopActive;
+            
+            const stopBtn = document.getElementById('emergency-stop');
+            const startBtn = document.getElementById('start-btn');
+            
+            if (emergencyStopActive) {
+                stopBtn.style.display = 'none';
+                startBtn.style.display = 'block';
+                console.log('EMERGENCY STOP ACTIVATED');
+                // Send emergency stop signal to simulation
+                if (window.websocket && window.websocket.readyState === WebSocket.OPEN) {
+                    window.websocket.send(JSON.stringify({
+                        type: 'emergency_stop',
+                        active: true
+                    }));
+                }
+            }
+        }
+        
+        function startSimulation() {
+            emergencyStopActive = false;
+            simulationPaused = false;
+            
+            const stopBtn = document.getElementById('emergency-stop');
+            const startBtn = document.getElementById('start-btn');
+            
+            stopBtn.style.display = 'block';
+            startBtn.style.display = 'none';
+            console.log('SIMULATION RESUMED');
+            // Send start signal to simulation
+            if (window.websocket && window.websocket.readyState === WebSocket.OPEN) {
+                window.websocket.send(JSON.stringify({
+                    type: 'emergency_stop',
+                    active: false
+                }));
+            }
+        }
+        
+        // Navigation data
+        let currentDirections = [];
+        let currentSpeed = 0;
+        let totalDistance = 0;
+        let estimatedArrival = null;
+        
+        // Materials (dark mode - black, grey, white only)
+        const materials = {
+            car: new THREE.MeshLambertMaterial({ color: 0xffffff }), // White car
+            road: new THREE.MeshLambertMaterial({ color: 0x333333 }), // Dark grey roads
+            roadLine: new THREE.MeshLambertMaterial({ color: 0xffffff }), // White lines
+            ground: new THREE.MeshLambertMaterial({ color: 0x1a1a1a }), // Very dark grey ground
+            raycast: new THREE.LineBasicMaterial({ color: 0xcccccc, transparent: true, opacity: 0.6 }), // Light grey
+            route: new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 3, transparent: true, opacity: 0.8 }) // White route
+        };
+        
+        // Route visualization
+        let routeLines = new Map();
+        
+        function init() {
+            console.log('Initializing 3D visualization...');
+            
+            // Check WebGL support
+            if (!window.WebGLRenderingContext) {
+                console.error('WebGL is not supported by this browser');
+                document.body.innerHTML = '<div style="color: white; text-align: center; padding: 50px;">WebGL is not supported</div>';
+                return;
+            }
+            
+            // Scene (dark mode)
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x000000, 100, 1000); // Black fog
+            console.log('Scene created');
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 20, 20);
+            console.log('Camera created');
+            
+            // Initialize camera target positions
+            targetCameraPosition.copy(camera.position);
+            targetCameraLookAt.set(0, 0, 0);
+            
+            // Get canvas element
+            const canvas = document.getElementById('threejs-canvas');
+            if (!canvas) {
+                console.error('Canvas element not found');
+                return;
+            }
+            console.log('Canvas found:', canvas);
+            
+            // Renderer with error handling
+            try {
+                renderer = new THREE.WebGLRenderer({ 
+                    canvas: canvas,
+                    antialias: true,
+                    preserveDrawingBuffer: true
+                });
+                console.log('WebGL renderer created successfully');
+                
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setClearColor(0x000000); // Black background
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                
+                console.log('Renderer configured, size:', window.innerWidth, 'x', window.innerHeight);
+            } catch (error) {
+                console.error('Failed to create WebGL renderer:', error);
+                document.body.innerHTML = '<div style="color: white; text-align: center; padding: 50px;">Failed to initialize WebGL: ' + error.message + '</div>';
+                return;
+            }
+            
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxPolarAngle = Math.PI / 2.2;
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 100, 50);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            directionalLight.shadow.camera.near = 0.5;
+            directionalLight.shadow.camera.far = 500;
+            directionalLight.shadow.camera.left = -100;
+            directionalLight.shadow.camera.right = 100;
+            directionalLight.shadow.camera.top = 100;
+            directionalLight.shadow.camera.bottom = -100;
+            scene.add(directionalLight);
+            
+            // Ground
+            const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
+            ground = new THREE.Mesh(groundGeometry, materials.ground);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+            
+            // Grid helper (dark mode)
+            const gridHelper = new THREE.GridHelper(1000, 50, 0x333333, 0x1a1a1a);
+            scene.add(gridHelper);
+            
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            
+            // Initialize minimap
+            initMinimap();
+            
+            // Start render loop
+            animate();
+            
+            // Connect WebSocket
+            connectWebSocket();
+        }
+        
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            // Use localhost for WebSocket connection regardless of how we access the web page
+            const wsUrl = `${protocol}//localhost:8765/`;
+            console.log('Attempting WebSocket connection to:', wsUrl);
+            
+            // Set a timeout for connection attempt
+            const connectionTimeout = setTimeout(() => {
+                if (ws.readyState === WebSocket.CONNECTING) {
+                    console.error('WebSocket connection timeout');
+                    document.getElementById('status').textContent = 'Connection Timeout';
+                    document.getElementById('status').className = 'disconnected';
+                    ws.close();
+                }
+            }, 5000); // 5 second timeout
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                clearTimeout(connectionTimeout);
+                console.log('WebSocket connected successfully');
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'connected';
+                
+                // Send a test message to verify connection
+                ws.send(JSON.stringify({command: 'test'}));
+                
+                if (reconnectInterval) {
+                    clearInterval(reconnectInterval);
+                    reconnectInterval = null;
+                }
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    updateVisualization(data);
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                console.log('WebSocket disconnected. Code:', event.code, 'Reason:', event.reason);
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'disconnected';
+                // Try to reconnect every 3 seconds
+                if (!reconnectInterval) {
+                    reconnectInterval = setInterval(connectWebSocket, 3000);
+                }
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                document.getElementById('status').textContent = 'Connection Error';
+                document.getElementById('status').className = 'disconnected';
+            };
+        }
+        
+        function updateVisualization(data) {
+            console.log('Received data:', data); // Debug log
+            try {
+                // Update path validation status
+                updatePathStatus(data.path_validation || {});
+                
+                if (simulationPaused) {
+                    // Still update minimap and navigation but don't move cars during emergency stop
+                    updateMinimap(data);
+                    updateNavigationSidebar(data);
+                    console.log('Emergency stop active - limited updates only');
+                    return;
+                }
+                
+                updateCars(data.cars || []);
+                updateRoads(data.roads || []);
+                updateRoutes(data.cars || []); // Add route visualization
+                updateInfo(data);
+                updateMinimap(data);
+                updateNavigationSidebar(data);
+                console.log('Successfully updated visualization');
+            } catch (error) {
+                console.error('Error updating visualization:', error);
+            }
+            // Camera update moved to animate() function for smoother following
+        }
+        
+        function updatePathStatus(pathValidation) {
+            const pathStatusDiv = document.getElementById('path-status');
+            if (!pathStatusDiv) return;
+            
+            const pathsValidated = pathValidation.paths_validated || false;
+            const validCount = pathValidation.valid_paths_count || 0;
+            const requiredCount = pathValidation.required_paths_count || 0;
+            
+            if (pathsValidated) {
+                pathStatusDiv.textContent = `✓ Paths Valid (${validCount}/${requiredCount}) - Ready!`;
+                pathStatusDiv.style.background = '#28a745'; // Green
+                pathStatusDiv.style.color = 'white';
+                
+                // Hide the status after a few seconds when everything is working
+                setTimeout(() => {
+                    if (pathStatusDiv.style.background === 'rgb(40, 167, 69)') { // Still green
+                        pathStatusDiv.style.opacity = '0.3';
+                    }
+                }, 3000);
+            } else {
+                pathStatusDiv.textContent = `⚠ Validating Paths... (${validCount}/${requiredCount})`;
+                pathStatusDiv.style.background = '#ffc107'; // Yellow/Orange
+                pathStatusDiv.style.color = 'black';
+                pathStatusDiv.style.opacity = '1'; // Make sure it's visible when there's an issue
+            }
+        }
+        
+        function initMinimap() {
+            minimapCanvas = document.getElementById('minimap-canvas');
+            if (minimapCanvas) {
+                minimapCtx = minimapCanvas.getContext('2d');
+                console.log('Minimap initialized');
+            }
+        }
+        
+        function updateMinimap(data) {
+            if (!minimapCtx || !bestCar) return;
+            
+            // Clear minimap (dark mode) - use correct 500x400 size
+            minimapCtx.fillStyle = '#000000';
+            minimapCtx.fillRect(0, 0, 500, 400);
+            
+            // Get car position for centering
+            const carPos = bestCar.position;
+            
+            // Improved scale for larger 500x400 minimap with more detail
+            const minimapScale = 3.0; // Increased scale for better road detail
+            const minimapCenterX = 250; // Center of 500px width
+            const minimapCenterY = 200; // Center of 400px height
+            
+            // Draw roads on minimap (dark mode with more detail)
+            if (data.roads) {
+                minimapCtx.strokeStyle = '#666666'; // Grey roads
+                minimapCtx.lineWidth = 4; // Thicker roads for better visibility
+                data.roads.forEach(road => {
+                    const startX = minimapCenterX + (road.start.x - carPos.x) * minimapScale;
+                    const startY = minimapCenterY + (road.start.z - carPos.z) * minimapScale;
+                    const endX = minimapCenterX + (road.end.x - carPos.x) * minimapScale;
+                    const endY = minimapCenterY + (road.end.z - carPos.z) * minimapScale;
+                    
+                    // Draw roads that are within the larger view area (500x400)
+                    if (startX >= -50 && startX <= 550 && startY >= -50 && startY <= 450) {
+                        minimapCtx.beginPath();
+                        minimapCtx.moveTo(startX, startY);
+                        minimapCtx.lineTo(endX, endY);
+                        minimapCtx.stroke();
+                        
+                        // Draw road center lines for better detail
+                        minimapCtx.strokeStyle = '#aaaaaa';
+                        minimapCtx.lineWidth = 1;
+                        minimapCtx.setLineDash([3, 3]); // Slightly larger dashes
+                        minimapCtx.beginPath();
+                        minimapCtx.moveTo(startX, startY);
+                        minimapCtx.lineTo(endX, endY);
+                        minimapCtx.stroke();
+                        minimapCtx.setLineDash([]);
+                        minimapCtx.strokeStyle = '#666666';
+                        minimapCtx.lineWidth = 4;
+                    }
+                });
+            }
+            
+            // Draw route on minimap showing progress - completed segments vs upcoming
+            if (data.cars && data.cars.length > 0) {
+                const carData = data.cars.find(car => !car.crashed) || data.cars[0];
+                if (carData.path_waypoints) {
+                    const currentWaypointIndex = carData.current_waypoint_index || 0;
+                    
+                    // Draw completed path segments in dark grey
+                    if (currentWaypointIndex > 0) {
+                        minimapCtx.strokeStyle = '#333333'; // Dark grey for completed
+                        minimapCtx.lineWidth = 3;
+                        minimapCtx.beginPath();
+                        
+                        for (let i = 0; i <= currentWaypointIndex && i < carData.path_waypoints.length; i++) {
+                            const point = carData.path_waypoints[i];
+                            const x = minimapCenterX + (point[0] - carPos.x) * minimapScale;
+                            const y = minimapCenterY + (point[1] - carPos.z) * minimapScale;
+                            
+                            if (i === 0) {
+                                minimapCtx.moveTo(x, y);
+                            } else {
+                                minimapCtx.lineTo(x, y);
+                            }
+                        }
+                        minimapCtx.stroke();
+                    }
+                    
+                    // Draw remaining path segments in white
+                    if (currentWaypointIndex < carData.path_waypoints.length - 1) {
+                        minimapCtx.strokeStyle = '#ffffff'; // White for upcoming
+                        minimapCtx.lineWidth = 3;
+                        minimapCtx.beginPath();
+                        
+                        for (let i = currentWaypointIndex; i < carData.path_waypoints.length; i++) {
+                            const point = carData.path_waypoints[i];
+                            const x = minimapCenterX + (point[0] - carPos.x) * minimapScale;
+                            const y = minimapCenterY + (point[1] - carPos.z) * minimapScale;
+                            
+                            if (i === currentWaypointIndex) {
+                                minimapCtx.moveTo(x, y);
+                            } else {
+                                minimapCtx.lineTo(x, y);
+                            }
+                        }
+                        minimapCtx.stroke();
+                    }
+                }
+            }
+            
+            // Draw car on minimap (white car, always in center)
+            minimapCtx.fillStyle = '#ffffff';
+            minimapCtx.fillRect(minimapCenterX - 4, minimapCenterY - 4, 8, 8);
+            
+            // Draw car direction indicator (white)
+            const carRotation = bestCar.rotation.y;
+            const arrowLength = 12; // Longer arrow for better visibility
+            const arrowX = minimapCenterX + Math.sin(carRotation) * arrowLength;
+            const arrowY = minimapCenterY + Math.cos(carRotation) * arrowLength;
+            
+            minimapCtx.strokeStyle = '#ffffff';
+            minimapCtx.lineWidth = 2;
+            minimapCtx.beginPath();
+            minimapCtx.moveTo(minimapCenterX, minimapCenterY);
+            minimapCtx.lineTo(arrowX, arrowY);
+            minimapCtx.stroke();
+        }
+        
+        function updateNavigationSidebar(data) {
+            // Update directions with real data from upcoming_segments
+            updateDirections(data);
+        }
+        
+        function updateDirections(data) {
+            let directions = [];
+            
+            // Use real upcoming_segments data if available
+            if (data.cars && data.cars.length > 0) {
+                const carData = data.cars.find(car => !car.crashed) || data.cars[0];
+                if (carData.upcoming_segments && carData.upcoming_segments.length > 0) {
+                    // Filter and format segments for display
+                    directions = carData.upcoming_segments.slice(0, 4).map((segment, index) => {
+                        // Use the action from segment which already contains proper instruction
+                        let instruction = segment.action || 'Continue straight';
+                        let streetName = segment.name || segment.street_name || 'Unknown Street';
+                        
+                        // Enhanced instruction formatting with proper street names
+                        if (instruction.toLowerCase().includes('continue')) {
+                            instruction = `Continue straight on ${streetName}`;
+                        } else if (instruction.toLowerCase().includes('slight')) {
+                            if (instruction.toLowerCase().includes('left')) {
+                                instruction = `Slight left onto ${streetName}`;
+                            } else if (instruction.toLowerCase().includes('right')) {
+                                instruction = `Slight right onto ${streetName}`;
+                            }
+                        } else if (instruction.toLowerCase().includes('sharp')) {
+                            if (instruction.toLowerCase().includes('left')) {
+                                instruction = `Sharp left onto ${streetName}`;
+                            } else if (instruction.toLowerCase().includes('right')) {
+                                instruction = `Sharp right onto ${streetName}`;
+                            }
+                        } else if (instruction.toLowerCase().includes('turn')) {
+                            if (instruction.toLowerCase().includes('left')) {
+                                instruction = `Turn left onto ${streetName}`;
+                            } else if (instruction.toLowerCase().includes('right')) {
+                                instruction = `Turn right onto ${streetName}`;
+                            }
+                        } else if (instruction.toLowerCase().includes('u-turn')) {
+                            instruction = `${instruction} on ${streetName}`;
+                        } else {
+                            // Default case - use the instruction as-is but add street name if not present
+                            if (!instruction.includes(streetName)) {
+                                instruction = `${instruction} onto ${streetName}`;
+                            }
+                        }
+                        
+                        // Use actual distance from segment data with better formatting
+                        let distance;
+                        if (segment.distance_str) {
+                            distance = segment.distance_str;
+                        } else if (segment.distance) {
+                            if (segment.distance > 1000) {
+                                distance = (segment.distance / 1609.34).toFixed(1) + ' miles'; // Convert m to miles
+                            } else if (segment.distance > 100) {
+                                distance = Math.round(segment.distance) + ' m';
+                            } else {
+                                distance = Math.round(segment.distance) + ' m';
+                            }
+                        } else {
+                            distance = `${(index + 1) * 0.3} miles`; // Fallback
+                        }
+                        
+                        return {
+                            instruction: instruction,
+                            distance: distance,
+                            current: index === 0,
+                            angle_diff: segment.angle_diff || 0,
+                            waypoint_index: segment.waypoint_index || 0
+                        };
+                    });
+                    
+                    // Log progress info for debugging
+                    if (carData.current_waypoint_index !== undefined) {
+                        console.log(`Car at waypoint ${carData.current_waypoint_index}/${carData.path_waypoints ? carData.path_waypoints.length : 0}`);
+                    }
+                }
+            }
+            
+            // Only show real directions data - no fallback fake directions
+            const directionsDiv = document.getElementById('directions');
+            if (directions.length === 0) {
+                directionsDiv.innerHTML = '<div class="direction-item"><div>Calculating route...</div></div>';
+            } else {
+                directionsDiv.innerHTML = directions.map(dir => `
+                    <div class="direction-item ${dir.current ? 'current' : ''}">
+                        <div>${dir.instruction}</div>
+                        <div class="direction-distance">in ${dir.distance}</div>
+                    </div>
+                `).join('');
+            }
+        }
+        
+        function updateCars(carsData) {
+            const currentTime = performance.now();
+            const deltaTime = currentTime - lastUpdateTime;
+            lastUpdateTime = currentTime;
+            
+            // Remove cars that no longer exist
+            for (let [carId, carGroup] of cars.entries()) {
+                if (!carsData.find(car => car.id === carId)) {
+                    scene.remove(carGroup);
+                    cars.delete(carId);
+                    previousCarData.delete(carId);
+                }
+            }
+            
+            // Update or create cars
+            let bestFitness = -Infinity;
+            bestCar = null;
+            
+            carsData.forEach(carData => {
+                if (carData.fitness > bestFitness) {
+                    bestFitness = carData.fitness;
+                }
+                
+                let carGroup = cars.get(carData.id);
+                if (!carGroup) {
+                    carGroup = createCar(carData);
+                    cars.set(carData.id, carGroup);
+                    scene.add(carGroup);
+                }
+                
+                // Get previous position for interpolation
+                const prevData = previousCarData.get(carData.id);
+                
+                if (prevData && smoothingEnabled) {
+                    // Improved interpolation with adaptive smoothing
+                    const maxDeltaTime = 100; // Maximum delta time for interpolation
+                    const clampedDelta = Math.min(deltaTime, maxDeltaTime);
+                    const adaptiveLerpFactor = Math.min(clampedDelta * interpolationSpeed, 1.0);
+                    
+                    // Smooth position interpolation
+                    carGroup.position.x = THREE.MathUtils.lerp(carGroup.position.x, carData.position.x, adaptiveLerpFactor);
+                    carGroup.position.y = THREE.MathUtils.lerp(carGroup.position.y, carData.position.y, adaptiveLerpFactor);
+                    carGroup.position.z = THREE.MathUtils.lerp(carGroup.position.z, carData.position.z, adaptiveLerpFactor);
+                    
+                    // Smooth rotation interpolation with angle wrapping
+                    let angleDiff = carData.rotation.y - carGroup.rotation.y;
+                    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+                    
+                    carGroup.rotation.y += angleDiff * adaptiveLerpFactor;
+                    
+                    // Store velocity for even smoother prediction
+                    if (!carGroup.userData.velocity) {
+                        carGroup.userData.velocity = new THREE.Vector3();
+                    }
+                    carGroup.userData.velocity.set(
+                        (carData.position.x - prevData.position.x) / (deltaTime / 1000),
+                        (carData.position.y - prevData.position.y) / (deltaTime / 1000),
+                        (carData.position.z - prevData.position.z) / (deltaTime / 1000)
+                    );
+                } else {
+                    // First frame or smoothing disabled, set directly
+                    carGroup.position.set(carData.position.x, carData.position.y, carData.position.z);
+                    carGroup.rotation.set(carData.rotation.x, carData.rotation.y, carData.rotation.z);
+                }
+                
+                // Store current data for next frame
+                previousCarData.set(carData.id, {
+                    position: { ...carData.position },
+                    rotation: { ...carData.rotation }
+                });
+                
+                // Update car color based on status (dark mode)
+                const carMesh = carGroup.children.find(child => child.name === 'car');
+                if (carMesh) {
+                    if (carData.saved_state) {
+                        carMesh.material.color.setHex(0xcccccc); // Light grey for saved
+                    } else if (carData.crashed) {
+                        carMesh.material.color.setHex(0x666666); // Dark grey for crashed
+                    } else {
+                        carMesh.material.color.setHex(0xffffff); // White for active
+                    }
+                }
+                
+                if (carData.fitness === bestFitness && !carData.crashed) {
+                    bestCar = carGroup;
+                }
+            });
+        }
+        
+        function createCar(carData) {
+            const carGroup = new THREE.Group();
+            
+            // Store car ID for route tracking
+            carGroup.userData = { carId: carData.id };
+            
+            // Car body (dark mode)
+            const carGeometry = new THREE.BoxGeometry(0.8, 0.4, 1.6);  // Much smaller car
+            const carMaterial = new THREE.MeshLambertMaterial({ 
+                color: 0xffffff // White car
+            });
+            const carMesh = new THREE.Mesh(carGeometry, carMaterial);
+            carMesh.name = 'car';
+            carMesh.castShadow = true;
+            carGroup.add(carMesh);
+            
+            // Car details (windows) - dark mode
+            const windowGeometry = new THREE.BoxGeometry(0.6, 0.25, 1.0);
+            const windowMaterial = new THREE.MeshLambertMaterial({ 
+                color: 0x333333, // Dark grey windows
+                transparent: true, 
+                opacity: 0.7 
+            });
+            const windowMesh = new THREE.Mesh(windowGeometry, windowMaterial);
+            windowMesh.position.y = 0.2;
+            carGroup.add(windowMesh);
+            
+            // Wheels (dark mode)
+            const wheelGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.1, 8);
+            const wheelMaterial = new THREE.MeshLambertMaterial({ color: 0x666666 }); // Dark grey wheels
+            
+            const wheelPositions = [
+                [-0.35, -0.15, 0.5], [0.35, -0.15, 0.5],  // Front wheels
+                [-0.35, -0.15, -0.5], [0.35, -0.15, -0.5]  // Rear wheels
+            ];
+            
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                wheel.position.set(pos[0], pos[1], pos[2]);
+                wheel.rotation.z = Math.PI / 2;
+                wheel.castShadow = true;
+                carGroup.add(wheel);
+            });
+            
+            return carGroup;
+        }
+        
+        function updateRoads(roadsData) {
+            // Remove roads that no longer exist
+            for (let [roadId, roadGroup] of roads.entries()) {
+                if (!roadsData.find(road => road.id === roadId)) {
+                    scene.remove(roadGroup);
+                    roads.delete(roadId);
+                }
+            }
+            
+            // Create new roads
+            roadsData.forEach(roadData => {
+                if (!roads.has(roadData.id)) {
+                    const roadGroup = createRoad(roadData);
+                    roads.set(roadData.id, roadGroup);
+                    scene.add(roadGroup);
+                }
+            });
+        }
+        
+        function createRoad(roadData) {
+            const roadGroup = new THREE.Group();
+            
+            // Calculate road geometry
+            const start = new THREE.Vector3(roadData.start.x, roadData.start.y, roadData.start.z);
+            const end = new THREE.Vector3(roadData.end.x, roadData.end.y, roadData.end.z);
+            const direction = end.clone().sub(start).normalize();
+            const length = start.distanceTo(end);
+            
+            // Road surface
+            const roadGeometry = new THREE.BoxGeometry(roadData.width, 0.2, length);
+            const roadMaterial = materials.road.clone();
+            const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
+            
+            // Position and orient the road
+            const center = start.clone().add(end).multiplyScalar(0.5);
+            roadMesh.position.copy(center);
+            roadMesh.position.y += 0.1;
+            
+            // Calculate rotation to align with direction
+            const angle = Math.atan2(direction.x, direction.z);
+            roadMesh.rotation.y = angle;
+            
+            roadMesh.receiveShadow = true;
+            roadGroup.add(roadMesh);
+            
+            // Road markings (center line)
+            const lineGeometry = new THREE.BoxGeometry(0.2, 0.25, length);
+            const lineMaterial = materials.roadLine.clone();
+            const lineMesh = new THREE.Mesh(lineGeometry, lineMaterial);
+            lineMesh.position.copy(center);
+            lineMesh.position.y += 0.2;
+            lineMesh.rotation.y = angle;
+            roadGroup.add(lineMesh);
+            
+            return roadGroup;
+        }
+        
+        function updateInfo(data) {
+            // Info panel removed - function kept for compatibility
+        }
+        
+        function updateRoutes(carsData) {
+            // Clear old route lines
+            for (let [carId, routeLine] of routeLines.entries()) {
+                if (!carsData.find(car => car.id === carId)) {
+                    scene.remove(routeLine);
+                    routeLines.delete(carId);
+                }
+            }
+            
+            // Update or create route lines
+            carsData.forEach(carData => {
+                if (carData.path_waypoints && carData.path_waypoints.length > 1) {
+                    let routeLine = routeLines.get(carData.id);
+                    
+                    // Create route line geometry - elevated above the road
+                    const points = carData.path_waypoints.map(point => 
+                        new THREE.Vector3(point[0], 0.5, point[1]) // Raised to 0.5 above ground
+                    );
+                    
+                    if (!routeLine) {
+                        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                        // Create thicker, more visible line material
+                        const lineMaterial = new THREE.LineBasicMaterial({ 
+                            color: 0x00ff00, 
+                            linewidth: 4, 
+                            transparent: true, 
+                            opacity: 0.8,
+                            depthTest: false // Render on top of other objects
+                        });
+                        routeLine = new THREE.Line(geometry, lineMaterial);
+                        routeLines.set(carData.id, routeLine);
+                        scene.add(routeLine);
+                    } else {
+                        // Update existing route
+                        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                        routeLine.geometry.dispose();
+                        routeLine.geometry = geometry;
+                    }
+                    
+                    // Make the best car's route more visible (dark mode)
+                    if (bestCar && carData.id === bestCar.userData?.carId) {
+                        routeLine.material.color.setHex(0xffffff); // White for best car
+                        routeLine.material.opacity = 1.0;
+                        routeLine.material.linewidth = 6; // Thicker line for best car
+                    } else {
+                        routeLine.material.color.setHex(0xcccccc); // Light grey for others
+                        routeLine.material.opacity = 0.7;
+                        routeLine.material.linewidth = 3;
+                    }
+
+                    // Arrival detection: if car has reached the final waypoint, notify parent once
+                    try {
+                        const total = carData.path_waypoints.length;
+                        const idx = typeof carData.current_waypoint_index === 'number' ? carData.current_waypoint_index : -1;
+                        if (total > 0 && idx >= total - 1) {
+                            if (!window._arrivalNotified) {
+                                window._arrivalNotified = true;
+                                if (window.parent && window.parent !== window) {
+                                    window.parent.postMessage({ type: 'destinationReached' }, '*');
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Arrival detection error:', e);
+                    }
+                }
+            });
+        }
+        
+        // Simulation control functions
+        function toggleSimulation() {
+            // This would send a message to the server to pause/resume
+            const btn = document.getElementById('pause-btn');
+            if (btn.textContent === 'Pause') {
+                btn.textContent = 'Resume';
+                document.getElementById('sim-status').textContent = 'Paused';
+                // Send pause command to server via WebSocket
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({command: 'pause'}));
+                }
+            } else {
+                btn.textContent = 'Pause';
+                document.getElementById('sim-status').textContent = 'Running';
+                // Send resume command to server via WebSocket
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({command: 'resume'}));
+                }
+            }
+        }
+        
+        function resetGeneration() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({command: 'reset_generation'}));
+            }
+        }
+        
+        function changeMode() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({command: 'change_mode'}));
+            }
+        }
+        
+        // Camera control functions
+        let cameraSmoothing = true; // Camera smoothing enabled
+        
+        function adjustCameraDistance(delta) {
+            followDistance += delta;
+            followDistance = Math.max(2, Math.min(15, followDistance)); // Closer range: 2-15
+            console.log('Camera distance:', followDistance);
+        }
+        
+        function toggleCameraSmoothing() {
+            cameraSmoothing = !cameraSmoothing;
+            cameraLerpFactor = cameraSmoothing ? 0.15 : 1.0;
+            document.getElementById('smooth-status').textContent = cameraSmoothing ? 'ON' : 'OFF';
+            console.log('Camera smoothing:', cameraSmoothing);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Update camera following if enabled
+            if (followMode && bestCar) {
+                // 3rd person camera behind the car with improved smoothing
+                const carPosition = bestCar.position;
+                const carRotation = bestCar.rotation;
+                
+                // Calculate position behind the car (180 degrees from forward direction)
+                const followHeight = 6; // Higher camera for better downward angle
+                
+                // Get the car's backward direction (behind the car)
+                const behindAngle = carRotation.y + Math.PI;
+                const backwardX = Math.sin(behindAngle) * followDistance;
+                const backwardZ = Math.cos(behindAngle) * followDistance;
+                
+                // Calculate desired camera position
+                const desiredCameraPosition = new THREE.Vector3(
+                    carPosition.x + backwardX,
+                    carPosition.y + followHeight,
+                    carPosition.z + backwardZ
+                );
+                
+                // Predict car movement for even smoother following
+                if (bestCar.userData.velocity) {
+                    const prediction = 0.1; // Look ahead time
+                    desiredCameraPosition.x += bestCar.userData.velocity.x * prediction;
+                    desiredCameraPosition.z += bestCar.userData.velocity.z * prediction;
+                }
+                
+                // Smooth camera position with adaptive smoothing
+                const cameraDistance = camera.position.distanceTo(desiredCameraPosition);
+                const adaptiveLerpFactor = Math.min(cameraLerpFactor + (cameraDistance * 0.01), 0.3);
+                
+                camera.position.lerp(desiredCameraPosition, adaptiveLerpFactor);
+                
+                // Smooth look target as well for more natural movement
+                const targetLookAt = new THREE.Vector3(carPosition.x, carPosition.y, carPosition.z);
+                controls.target.lerp(targetLookAt, cameraLerpFactor * 1.5);
+            }
+            
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Control functions
+        function resetCamera() {
+            camera.position.set(0, 20, 20);
+            controls.target.set(0, 0, 0);
+            targetCameraPosition.set(0, 20, 20);
+            targetCameraLookAt.set(0, 0, 0);
+            followMode = false;
+        }
+        
+        function toggleFollow() {
+            followMode = !followMode;
+        }
+        
+        function toggleWireframe() {
+            wireframeMode = !wireframeMode;
+            Object.values(materials).forEach(material => {
+                if (material.wireframe !== undefined) {
+                    material.wireframe = wireframeMode;
+                }
+            });
+        }
+        
+        // Initialize when page loads
+        init();
+    </script>
+</body>
+</html>

@@ -234,7 +234,7 @@ class OSMRoadSystem:
         half_width = max(1.0, nearest_seg.width / 2.0)
         norm_dev = max(-1.0, min(1.0, deviation / half_width))
         return norm_dev
-    def __init__(self, center_lat=-36.902395416035674, center_lon=174.9444570937648, radius=1000):
+    def __init__(self, center_lat=-36.902395416035674, center_lon=174.9444570937648, radius=1500):
         self.center_lat = center_lat
         self.center_lon = center_lon
         self.radius = radius
